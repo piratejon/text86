@@ -13,46 +13,21 @@ pop ds
 mov word[ds:(9*4)], keyboard_handler
 mov word[ds:(9*4)+2], 0
 
-; set mode 2 thanks http://www.computer-engineering.org/ps2keyboard/ for the explanation!
-.wait_buffer_write: ; dizzyloop til we can write to the keyboard buffer
-in al, 0x64
-and al, 0x01
-jz .wait_buffer_write
-
-; inform_pic_of_desire_to_change_modes:
-mov al, 0xf0
-out 0x60, al
-
-.wait_ack:
-in al, 0x60
-cmp al, 0xfa
-jne .wait_ack
-
-.wait_buffer_write_mode:
-in al, 0x64
-and al, 0x01
-jz .wait_buffer_write_mode
-
-; inform_pic_of_desired_mode_change:
-mov al, 0x02
-out 0x60, al
-
-.await_ack_mode_change:
-in al, 0x60
-cmp al, 0xfa
-jne .await_ack_mode_change
-
 ; presumably the datasegment will not change during all the interrupting?
-;push 0xb800
-;pop ds
-;xor cx,cx
+push 0xb800
+pop es
+xor di,di
+mov cx, 2000
+mov ax, 0x7820
+repnz stosw
+xor di, di
 
 sti
 
 jmp $ ; this is an infinite loop since we're handling kbd by interrupt!
 
 keyboard_handler:
-  pusha ; push all flags!
+  pushf ; push all flags!
 
 .spin: ; interrupt indicates key pressed; dizzyloop til read-ok
   in al, 0x64
@@ -61,56 +36,49 @@ keyboard_handler:
 
   in al, 0x60
 
+  ; is this a control character?
+  cmp al, 0x0e
+  jne .ctl2
+  cmp di, 2
+  jl .done
+  sub di, 2
+  mov byte [ds:di], 0x20
+  jmp .done
+
+.ctl2:
+
   ; now al has the char(mander)
   ; 'in' is how we BASICally say peek(achu)
   ; 'out' used to be called poke(emon)
 
-  call write_byte_as_hex
-  mov al, '|'
-  call bios.write_char
 
-  ;call scancode_to_ascii
-  ;jz nonprintable
-  ;mov byte[cx], al
-  ;add cx, 2
+  ; here the scan code is translated to ascii and drawn
+  push ds
+  push word 0x00
+  pop ds
+  mov bx, qwerty_ascii_lower
+  xlatb
+  pop ds
+  cmp al, 0
+  je .done
 
-nonprintable:
+.draw:
+  push 0xb800
+  pop ds
+  mov [ds:di], al
+  add di, 2
+
+.done:
   ; don't be lame and leave the brogrammable interrupt controller hangin'
   mov al, 0x20
   out 0x20, al
 
-  popa
+  popf
 
 iret
 
-; al is a scancode and shall become a great ascii
-scancode_to_ascii:
-
-ret
-
-bios.write_char:
-  pusha
-  mov ah, 0x0E
-  int 0x10
-  popa
-ret
-
-hex_chars: db '0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'
-
-write_byte_as_hex:
-  pusha
-  and ax, 0xFF
-  push ax
-  mov bx, ax
-  shr bx, 4
-  mov al, [hex_chars+bx]
-  call bios.write_char
-  pop bx
-  and bx, 0xF
-  mov al, [hex_chars+bx]
-  call bios.write_char
-  popa
-ret
+qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
+qwerty_ascii_upper: db 0,0,0x21,'@',0x23,'$','%','^','&','*','(',')','_','+',0,0,'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,'A','S','D','F','G','H','J','K','L', ':', '"', '~', 0, 0x7c, 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' '
 
 times 510-($-$$) db 0
 dw 0xAA55
