@@ -4,30 +4,39 @@ top:
 use16
 org 0x7C00
 
-cli
+; initialize the keyboard interrupt handler
+  cli
+  xor ax, ax
+  push ax
+  pop ds
+  mov word[ds:(9*4)], keyboard_handler
+  mov word[ds:(9*4)+2], 0
 
-xor ax, ax
-push ax
-pop ds
+; reset the screen
+  push 0xb800
+  pop es
+  xor di,di
+  mov cx, 2000
+  mov ax, 0x7820
+  repnz stosw
 
-mov word[ds:(9*4)], keyboard_handler
-mov word[ds:(9*4)+2], 0
+; clear the shift flag
+  xor cl, cl
 
-; presumably the datasegment will not change during all the interrupting?
-push 0xb800
-pop es
-xor di,di
-mov cx, 2000
-mov ax, 0x7820
-repnz stosw
-xor di, di
+; initialize the buffer and index
+  push buffer
+  pop es
+  xor di, di
 
-sti
+; ds is scancode-to-ascii LUT offset
+  xor ds, ds
 
-jmp $ ; this is an infinite loop since we're handling kbd by interrupt!
+; start the "main" loop by turning on interrupts
+  sti   
+  jmp $
 
 keyboard_handler:
-  pushf ; push all flags!
+  ; pushf ; push all flags!
 
 .spin: ; interrupt indicates key pressed; dizzyloop til read-ok
   in al, 0x64
@@ -35,45 +44,72 @@ keyboard_handler:
   jz .spin
 
   in al, 0x60
-
-  ; is this a control character?
-  cmp al, 0x0e
-  jne .ctl2
-  cmp di, 2
-  jl .done
-  sub di, 2
-  mov byte [ds:di], 0x20
-  jmp .done
-
-.ctl2:
-
   ; now al has the char(mander)
   ; 'in' is how we BASICally say peek(achu)
   ; 'out' used to be called poke(emon)
 
+  ; is this a control character?
+  cmp al, 0x0e ; backspace
+  je .backspace
+  cmp al, 0x2a
+  je .shift_down
+  cmp al, 0x36
+  je .shift_down
+  cmp al, 0xaa
+  je .shift_up
+  cmp al, 0xb6
+  je .shift_up
+
+  jmp .translate
+
+.backspace:
+  cmp di, 1
+  jl .done ; are we already at the beginning?
+  sub di, 1
+  mov byte [es:di], 0x20
+  jmp .blit
+
+.shift_down:
+  or cl, 1
+  jmp .done
+
+.shift_up:
+  and cl, 0
+  jmp .done
+
+.crlf:
+  jmp .done
 
   ; here the scan code is translated to ascii and drawn
-  push ds
-  push word 0x00
-  pop ds
+.translate:
+  mov bx, qwerty_ascii_upper
+  test cl, 1
+  jnz .upper
   mov bx, qwerty_ascii_lower
+.upper:
   xlatb
-  pop ds
   cmp al, 0
   je .done
 
 .draw:
+  mov [es:di], al
+  add di, 1
+
+.blit:
   push 0xb800
   pop ds
+  mov al, [es:di]
+  shl di, 1
   mov [ds:di], al
-  add di, 2
+  shr di, 1
 
 .done:
+
   ; don't be lame and leave the brogrammable interrupt controller hangin'
   mov al, 0x20
   out 0x20, al
 
-  popf
+  ; popf
 
 iret
 
@@ -83,5 +119,7 @@ qwerty_ascii_upper: db 0,0,0x21,'@',0x23,'$','%','^','&','*','(',')','_','+',0,0
 times 510-($-$$) db 0
 dw 0xAA55
 
-times 1474560 - ($ - $$) db 0 ; our "filesystem"
+buffer:
+
+times 1474560 - ($ - $$) db 0x20 ; our "filesystem"
 
