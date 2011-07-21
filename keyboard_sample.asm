@@ -29,7 +29,9 @@ org 0x7C00
   xor di, di
 
 ; ds is scancode-to-ascii LUT offset
-  xor ds, ds
+  xor ax, ax
+  push ax
+  pop ds
 
 ; start the "main" loop by turning on interrupts
   sti   
@@ -63,9 +65,9 @@ keyboard_handler:
   jmp .translate
 
 .backspace:
-  cmp di, 1
+  cmp di, 2
   jl .done ; are we already at the beginning?
-  sub di, 1
+  sub di, 2
   mov byte [es:di], 0x20
   jmp .blit
 
@@ -87,21 +89,33 @@ keyboard_handler:
   jnz .upper
   mov bx, qwerty_ascii_lower
 .upper:
+  push ds
+  push 0
+  pop ds
   xlatb
+  pop ds
   cmp al, 0
   je .done
 
 .draw:
-  mov [es:di], al
-  add di, 1
+  mov ah, 0x78
+  mov [es:di], ax
+  add di, 2
 
 .blit:
+; movs from address DS:(E)SI to address ES:(E)DI
+  push di
+  xor si, si
+  xor di, di
   push 0xb800
+  push es
   pop ds
-  mov al, [es:di]
-  shl di, 1
-  mov [ds:di], al
-  shr di, 1
+  pop es
+  mov cx, 2000
+  repnz movsw
+  pop di
+  push ds
+  pop es
 
 .done:
 
