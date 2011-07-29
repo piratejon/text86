@@ -4,6 +4,9 @@ top:
 use16
 org 0x7C00
 
+; all our string ops move forward
+  cld
+
 ; initialize the keyboard interrupt handler
   cli
   xor ax, ax
@@ -12,7 +15,7 @@ org 0x7C00
   mov word[ds:(9*4)], keyboard_handler
   mov word[ds:(9*4)+2], 0
 
-; reset the screen
+; reset the screen b800:0-b800:7c0, that's b8000-b87c0
   push 0xb800
   pop es
   xor di,di
@@ -20,13 +23,14 @@ org 0x7C00
   mov ax, 0x7820
   repnz stosw
 
+; initialize the buffer and index
+  mov cx, buffer
+  shr cx, 4
+  mov es, cx
+  xor di, di
+
 ; clear the shift flag
   xor cl, cl
-
-; initialize the buffer and index
-  push buffer
-  pop es
-  xor di, di
 
 ; ds is scancode-to-ascii LUT offset
   xor ax, ax
@@ -89,11 +93,9 @@ keyboard_handler:
   jnz .upper
   mov bx, qwerty_ascii_lower
 .upper:
-  push ds
   push 0
   pop ds
   xlatb
-  pop ds
   cmp al, 0
   je .done
 
@@ -104,7 +106,8 @@ keyboard_handler:
 
 .blit:
 ; movs from address DS:(E)SI to address ES:(E)DI
-  push di
+  push cx ; save the shift flag
+  push di ; save the buffer index
   xor si, si
   xor di, di
   push 0xb800
@@ -113,7 +116,8 @@ keyboard_handler:
   pop es
   mov cx, 2000
   repnz movsw
-  pop di
+  pop di ; restore the buffer index
+  pop cx ; restore the shift flag
   push ds
   pop es
 
