@@ -14,28 +14,19 @@ push word 0
 pop es
 
 xor ebx, ebx
+clc
+
 e820_loop:
-  ; setup the interrupt parameters
-  mov eax, 0xe820
-  mov ecx, e820_buf_end - e820_buf_start
+  mov ax, 0xe820
+  mov cx, e820_buf_end - e820_buf_start
   mov edx, 'PAMS'
-  mov edi, e820_buf_start
+  mov di, e820_buf_start
 
-  ; do the interrupt
   int 0x15
-
-  ; failure condition: carry flag set
   jc short .e820_done
 
-  ; failure condition: eax != SMAP
   cmp eax, 'PAMS'
-  jne short .e820_failed
-
-  cmp ecx, 20
-  jl short .e820_failed
-
-  cmp ecx, 24
-  jg short .e820_failed
+  jc short .e820_failed
 
   ; presumably a valid entry -- is it useable memory?
   cmp [di+16], dword 1
