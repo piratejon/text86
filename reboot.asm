@@ -11,9 +11,7 @@ cli ; we are getting ready don't let anyone interrupt us
 
 ; initialize the buffer for the memory spec
 push word 0
-push word 0
 pop es
-pop bp
 
 xor ebx, ebx
 e820_loop:
@@ -33,6 +31,12 @@ e820_loop:
   cmp eax, 'PAMS'
   jne short .e820_failed
 
+  cmp ecx, 20
+  jl short .e820_failed
+
+  cmp ecx, 24
+  jg short .e820_failed
+
   ; presumably a valid entry -- is it useable memory?
   cmp [di+16], dword 1
   jne short .next_entry
@@ -40,14 +44,14 @@ e820_loop:
   ;;; check what we have with what we got!
   mov eax, [di+12] ; compare current hiword to largest-known-elt hiword
   cmp eax, [large_window_size+4]
-  jl .next_entry ; the hiword is smaller than what we have
+  jl short .next_entry ; the hiword is smaller than what we have
 
   ; here, the hiword is greater than or equal to what we have
-  jg .move_hiword 
+  jg short .move_hiword 
 
   mov eax, [di+8]
   cmp eax, [large_window_size]
-  jle .next_entry
+  jle short .next_entry
 
 .move_hiword:
   mov eax, [di+12]
@@ -213,6 +217,6 @@ entry_size: dw 0
 e820_buf_start:
 window_index: dq 0
 window_location: dq 0
-window_flags: dq 0
+window_flags: dd 0
 e820_buf_end:
 
