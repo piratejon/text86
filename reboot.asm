@@ -12,6 +12,8 @@ cli ; we are getting ready don't let anyone interrupt us
 ; initialize the buffer for the memory spec
 push word 0
 push word 0
+push word 0
+pop ds
 pop es
 pop bp
 
@@ -47,15 +49,32 @@ e820_loop:
 
   movzx eax, cx
   call hexprint_eax
+
+  mov al, ' '
+  stosb
+  inc di
+
+  mov eax, [entry_size]
+  call hexprint_eax
+
   mov di, 160
-
   mov si, e820_buf_start
-
-  push 0
-  pop ds
 
 .e820_done_loop:
   ; print the high dword followed by the low dword of the location
+
+  movzx eax, si
+  call hexprint_eax
+  mov al, ':'
+  stosb
+  inc di
+
+  movzx eax, word [entry_size]
+  call hexprint_eax
+  mov al, ' '
+  stosb
+  inc di
+
   mov eax, [si+4]
   call hexprint_eax
   mov eax, [si]
@@ -87,13 +106,15 @@ e820_loop:
   mov eax, [si+20]
   call hexprint_eax
 
-  add di, 58
-  ;add si, [entry_size]
-  add si, 20
+  add di, 22
+  add si, [entry_size]
 
   loopnz .e820_done_loop
 
-  jmp await_keypress
+  mov eax, [entry_size]
+  call hexprint_eax
+
+  jmp short await_keypress
   hlt
 
 ; await a keypress, then reboot
@@ -109,18 +130,18 @@ await_keypress:
   mov word[ds:(9*4)+2], 0
 
   sti
-  jmp $
+  jmp short $
 
 keyboard_handler:
   cli
 .spin:
   in al, 0x64
   and al, 0x01
-  jz .next
+  jz short .next
   in al, 0x60
 .next:
   and al, 0x02
-  jnz .spin
+  jnz short .spin
   
   ; reboot via kbd pic
   mov al, 0xFE
@@ -147,13 +168,13 @@ zprint:
   cld
   push 0xb800
   pop es
-.printloop:
+.zprintloop:
   cmp byte [si], 0
-  je .done
+  je short .done
   movsb
   mov byte [es:di], 0x07
   inc di
-  jmp .printloop
+  jmp short .zprintloop
 .done:
   ret 0
 
@@ -163,7 +184,7 @@ hexprint_al:
   shr al, 4
   and al, 0x0f
   cmp al, 0x09
-  jle .num
+  jle short .num
   add al, 0x07
 .num:
   add al, 0x30
@@ -172,7 +193,7 @@ hexprint_al:
   pop ax
   and al, 0x0f
   cmp al, 0x09
-  jle .num2
+  jle short .num2
   add al, 0x07
 .num2:
   add al, 0x30
