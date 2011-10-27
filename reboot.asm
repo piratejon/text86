@@ -10,109 +10,62 @@ org 0x7c00
 cli ; we are getting ready don't let anyone interrupt us
 
 ; initialize the buffer for the memory spec
-push word 0
-push word 0
-push word 0
-pop ds
-pop es
-pop bp
+mov ax, 0
+mov ds, ax
+mov es, ax
+mov bp, ax
 
-mov ax, 0xe820
-mov cx, e820_buf_end - e820_buf_start
 mov edx, 'PAMS' ; SMAP in little endian
 mov di, e820_buf_start
 
 e820_loop:
+  mov eax, 0xe820
+  mov ecx, e820_buf_end - e820_buf_start
   int 0x15
   jc short .e820_done
   cmp eax, edx
   jne short .e820_failed
-  mov eax, 0xe820
   inc bp
-  mov [entry_size], cx
-  add di, cx
+  ; here, a valid entry!
+
+  ; is it useable?
+  cmp [di_flags], dword 1
+  jne short .next_entry
+
+  ; who cares about the hi-dword (this is so wrong!)
+  mov eax, [di_size_lo]
+  cmp eax, [large_window_lo]
+  jl short .next_entry
+  mov [large_window_lo], eax
+  mov eax, [di_loc_lo]
+  mov [relocate], eax
+
+.next_entry:
   test ebx, ebx
-  jz .e820_done
-  jmp e820_loop
+  jz short .e820_done
+  jmp short e820_loop
 
 .e820_failed:
+; TODO: print an error
   hlt
 
 .e820_done:
-  ; initialize video buffer target
+  ; initialize video buffer target, b8000:xxxx
   push 0xb800
   pop es
 
+  ; top left character of the screen
   mov di, 0x0
 
-  mov cx, bp
-
-  movzx eax, cx
+  mov eax, [large_window_lo]
   call hexprint_eax
-
-  mov al, ' '
+  mov al, '@'
   stosb
   inc di
-
-  mov eax, [entry_size]
+  mov eax, [relocate]
   call hexprint_eax
 
-  mov di, 160
-  mov si, e820_buf_start
-
-.e820_done_loop:
-  ; print the high dword followed by the low dword of the location
-
-  movzx eax, si
-  call hexprint_eax
-  mov al, ':'
-  stosb
-  inc di
-
-  movzx eax, word [entry_size]
-  call hexprint_eax
-  mov al, ' '
-  stosb
-  inc di
-
-  mov eax, [si+4]
-  call hexprint_eax
-  mov eax, [si]
-  call hexprint_eax
-
-  mov al, ' '
-  stosb
-  inc di
-
-  ; high dword, low dword of the size
-  mov eax, [si+12]
-  call hexprint_eax
-  mov eax, [si+8]
-  call hexprint_eax
-
-  mov al, ' '
-  stosb
-  inc di
-
-  ; type: a value of 1 indicates free/available memory
-  mov eax, [si+16]
-  call hexprint_eax
-
-  mov al, ' '
-  stosb
-  inc di
-
-  ; special ACPI 3.0 dword -- who the hell knows what this should be!
-  mov eax, [si+20]
-  call hexprint_eax
-
-  add di, 22
-  add si, [entry_size]
-
-  loopnz .e820_done_loop
-
-  mov eax, [entry_size]
-  call hexprint_eax
+  
 
   jmp short await_keypress
   hlt
@@ -203,13 +156,6 @@ hexprint_al:
 
   ret 0
 
-large_window_index: db 0x0
-large_window_size: dq 0x0000000000000000
-large_window_location: dq 0x0000000000000000
-
-;large_window_size: dq 0xffffffffffffffff
-;large_window_location: dq 0xffffffffffffffff
-
 memmap: db 'memmap ', 0
 failed: db 'failed ', 0
 found: db 'found ', 0
@@ -218,11 +164,18 @@ prompt: db 'press any key to reboot!', 0
 times 510 - ($ - $$) db 0x00 ; round out the boot sector
 dw 0xaa55
 
-entry_size: dw 0
+relocate: dd 0
+large_window_size:
+large_window_lo: dd 0
+large_window_hi: dd 0
 
 e820_buf_start:
-window_index: dq 0
-window_location: dq 0
-window_flags: dq 0
+window_location: ; dq 0
+di_loc_lo: dd 0
+di_loc_hi: dd 0
+window_size: ; dq 0
+di_size_lo: dd 0
+di_size_hi: dd 0
+di_flags: dq 0
 e820_buf_end:
 
