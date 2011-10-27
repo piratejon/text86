@@ -11,68 +11,29 @@ cli ; we are getting ready don't let anyone interrupt us
 
 ; initialize the buffer for the memory spec
 push word 0
+push word 0
 pop es
+pop bp
 
-xor ebx, ebx
-clc
+mov ax, 0xe820
+mov cx, e820_buf_end - e820_buf_start
+mov edx, 'PAMS' ; SMAP in little endian
+mov di, e820_buf_start
 
 e820_loop:
-  mov ax, 0xe820
-  mov cx, e820_buf_end - e820_buf_start
-  mov edx, 'PAMS'
-  mov di, e820_buf_start
-
   int 0x15
   jc short .e820_done
-
-  cmp eax, 'PAMS'
-  jc short .e820_failed
-
-  ; presumably a valid entry -- is it useable memory?
-  cmp [di+16], dword 1
-  jne short .next_entry
-
-  ;;; check what we have with what we got!
-  mov eax, [di+12] ; compare current hiword to largest-known-elt hiword
-  cmp eax, [large_window_size+4]
-  jl short .next_entry ; the hiword is smaller than what we have
-
-  ; here, the hiword is greater than or equal to what we have
-  jg short .move_hiword 
-
-  mov eax, [di+8]
-  cmp eax, [large_window_size]
-  jle short .next_entry
-
-.move_hiword:
-  mov eax, [di+12]
-  mov [large_window_size+4], eax
-
-.move_loword:
-  mov eax, [di+8]
-  mov [large_window_size], eax
-
-  ; save the location of this entry
-  mov eax, [di+4]
-  mov [large_window_location+4], eax
-  mov eax, [di]
-  mov [large_window_location], eax
-
-.next_entry:
-
-  ; keep looping while ebx is not zero
+  cmp eax, edx
+  jne short .e820_failed
+  mov eax, 0xe820
+  inc bp
+  mov [entry_size], cx
+  add di, cx
   test ebx, ebx
-  jnz short e820_loop
-
-  ; we made it!
-  jmp short .e820_done
+  jz .e820_done
+  jmp e820_loop
 
 .e820_failed:
-  push 0xb800
-  pop es
-  mov di, 0
-  mov si, failed
-  call zprint
   hlt
 
 .e820_done:
@@ -82,19 +43,55 @@ e820_loop:
 
   mov di, 0x0
 
-  mov eax, [large_window_size+4]
+  mov cx, bp
+
+  movzx eax, cx
   call hexprint_eax
-  mov eax, [large_window_size]
+  mov di, 160
+
+  mov si, e820_buf_start
+
+  push 0
+  pop ds
+
+.e820_done_loop:
+  ; print the high dword followed by the low dword of the location
+  mov eax, [si+4]
+  call hexprint_eax
+  mov eax, [si]
   call hexprint_eax
 
-  mov al, '@'
+  mov al, ' '
   stosb
   inc di
 
-  mov eax, [large_window_location+4]
+  ; high dword, low dword of the size
+  mov eax, [si+12]
   call hexprint_eax
-  mov eax, [large_window_location]
+  mov eax, [si+8]
   call hexprint_eax
+
+  mov al, ' '
+  stosb
+  inc di
+
+  ; type: a value of 1 indicates free/available memory
+  mov eax, [si+16]
+  call hexprint_eax
+
+  mov al, ' '
+  stosb
+  inc di
+
+  ; special ACPI 3.0 dword -- who the hell knows what this should be!
+  mov eax, [si+20]
+  call hexprint_eax
+
+  add di, 58
+  ;add si, [entry_size]
+  add si, 20
+
+  loopnz .e820_done_loop
 
   jmp await_keypress
   hlt
@@ -143,9 +140,6 @@ hexprint_eax:
   call hexprint_al
   shr eax, 8
   call hexprint_al
-  mov al, ' '
-  stosb
-  inc di
 ;  pop eax
   ret 0
 
@@ -208,6 +202,6 @@ entry_size: dw 0
 e820_buf_start:
 window_index: dq 0
 window_location: dq 0
-window_flags: dd 0
+window_flags: dq 0
 e820_buf_end:
 
