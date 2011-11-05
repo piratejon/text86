@@ -1,10 +1,15 @@
+CC=gcc
+CFLAGS=-Wall -g3
 
 compile:
-	nasm keyboard_sample.asm
-#	ndisasm keyboard_sample -o 0x7c00 | cut --complement -c9-26 > disasm
-	ndisasm keyboard_sample -o 0x7c00 > disasm
-#	mousepad disasm
+	nasm reboot.asm
 
-run:
+run: compile
 	bochs -f ./testing
+
+parse: fat12parse.c
+	$(CC) $(CFLAGS) fat12parse.c -o fat12parse
+
+write:
+	sudo dd if=reboot of=/dev/sdb bs=512 count=1
 
