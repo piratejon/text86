@@ -76,46 +76,69 @@ e820_loop:
   and al, 0xfe
   out 0x92, al
 
-  push di
-
 ; get boot device parameters
-  mov ah, 8
+  mov word [esdibuf], 0x0042
+  mov ah, 0x48
   mov dl, [boot_dev]
-  push dword 0
-  pop es
-  pop di
-  int 0x13 ; ah=8, dl=boot_dev; get drive parameters
-  cmp ah, 0
-  jnz short fail_int13
-
-  ; try reading the first sector
   push word 0
-  pop es
-  mov bx, relocate
-  mov ax, 0x0201 ; ah is int13h function, al is # sectors
-  ;xor cx, cx ; ch=track, cl=sector
-  mov cx, 0x0101
-  mov dh, 0 ; head
-  mov dl, [boot_dev]
+  pop ds
+  mov si, [esdibuf]
+  mov cx, [ds:si]
   int 0x13
+  jc fail_int13_48
 
-  push 0xb800
-  pop es
-  pop di
+continue_fail:
 
+  ; cf, ah, [ds:si]
+  mov di, 160
+  mov al, ah
+  call hexprint_al ; ah error
+  mov di, 320
+
+  ; hexprint 0x42 bytes now!
+  mov cx, word [esdibuf]
+  add di, 20
+hex_dump_loop:
+  lodsb
+  call hexprint_al
+  test cx, 0x07
+  jnz .next
+  mov al, ' '
+  stosb
+  inc di
+
+  sub si, 8
+  push cx
+  mov cx, 8
+.raw_loop:
+  mov al, [si]
+  mov [es:di], al
+  cmp al, 0x20
+  jge .next_rl
+  mov al, '.'
+  mov [es:di], al
+.next_rl:
   add di, 2
+  inc si
+  loopnz .raw_loop
+  pop cx
 
-  and eax, 0x0000ffff
-  call hexprint_eax
-  
-  jc short fail_int13
+  add di, 110
+.next:
+  loopnz hex_dump_loop
 
   jmp short await_keypress
 
-fail_int13:
+fail_int13_48:
+  push eax
   mov si, fail_int13_prompt
   call zprint
-  jmp short await_keypress
+  pop eax
+  add di, 2
+  mov al, ah
+  call hexprint_al
+
+  jmp short continue_fail
  
 ; await a keypress, then reboot
 await_keypress:
@@ -144,7 +167,7 @@ keyboard_handler:
   jnz short .spin
   
   ; reboot via kbd pic
-  mov al, 0xFE
+  mov al, 0xfe
   out 0x64, al
 
   iret
@@ -228,3 +251,4 @@ di_size_hi: dd 0
 di_flags: dq 0
 e820_buf_end:
 
+esdibuf: dw 0x0000
