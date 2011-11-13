@@ -29,6 +29,11 @@ boot_code:
 
 cli ; we are getting ready don't let anyone interrupt us
 
+push 0
+pop es
+push 0
+pop ds
+
 mov [boot_dev], dl ; save boot device so we don't have to write a USB driver!
 
 mov ax, [0x463]
@@ -38,12 +43,68 @@ mov [video_port], ax
 mov ah, 0
 ; dl is still cool
 int 0x13
+jc int13_error
+
+; now disk subsystem is reset
+; now we can read info about the drive!
+mov ah, 8
+mov dl, [boot_dev]
+push word 0
+pop es
+xor di, di
+int 0x13
+jc int13_error
+
+; now we have good drive info!
+mov [max_head], dh
+mov dx, cx
+and dl, 0x3f
+mov [max_sector], dl
+and cl, 0xc0 ; preserve the high two bits
+; now ch is the low 8 bits of max cyl and cl high bits are the high bits
+mov dh, cl
+shr dh, 6
+mov dl, ch
+mov [max_cylinder], dx
+
+; now let us read a great sector
+mov ah, 2 ; function= read to memory
+mov al, 1 ; number of sectors to read
+mov ch, 0 ; low 8 bits of cyl#, can be zero
+mov cl, 0x02 ; skip sector 0 since it should already be loaded
+mov dh, 0 ; head #, can be zero
+mov dl, [boot_dev]
+push 0x0
+pop es
+mov bx, code_page_2
+int 0x13
+jc int13_error
+
+; otherwise we should have a good keymap now!
+
 push 0xb800
 pop es
 xor di, di
+
+mov eax, [code_page_2]
+call hexprint_eax
+
+mov eax, [code_page_2+4]
+call hexprint_eax
+;hlt
+
 ; output is: ah status, cf yay/neigh
 
 jmp await_keypress
+
+int13_error:
+  push word 0xb800
+  pop es
+  xor di, di
+  call hexprint_al
+  mov al, 'e'
+  stosb
+  hlt
 
 ; al ah bl cl ch dl dh  di    es
 ; 00 00 00 ff ff 02 0f 00 00 00 00 -- from thinkpad t42
@@ -253,10 +314,14 @@ keyboard_handler:
                 
   iret
 
-qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
-qwerty_ascii_lower_end:
-qwerty_ascii_upper: db 0,0,0x21,'@',0x23,'$','%','^','&','*','(',')','_','+',0,0,'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,'A','S','D','F','G','H','J','K','L', ':', '"', '~', 0, 0x7c, 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' '
-qwerty_ascii_upper_end:
+boot_dev: db 0
+shift_flag: db 0
+max_sector: db 0
+max_head: db 0
+max_cylinder: dw 0
+video_port: dw 0
+last_sector: dw 0
+last_vid_byte: dw 0
 
 BEGIN_OVERWRITE:
 times 444 - ($ - $$) db 0x00 ; round out the boot sector
@@ -266,15 +331,15 @@ dw 0x0 ; why oughtn't i utilize this word? #OCCUPYBOOTSECTORS
 times 510 - ($ - $$) db 0xcd ; partition table
 dw 0xaa55
 
-shift_flag: db 0
-
-video_port: dw 0
-boot_dev: dw 0
-last_sector: dw 0
-last_vid_byte: dw 0
-
 code_page_2:
 ;db 0x54,0x07,0x68,0x07,0x69,0x07,0x73,0x07,0x20,0x07,0x69,0x07,0x73,0x07,0x20,0x07,0x73,0x07,0x6f,0x07,0x6d,0x07,0x65,0x07,0x20,0x07,0x73,0x07,0x61,0x07,0x6d,0x07,0x70,0x07,0x6c,0x07,0x65,0x07,0x20,0x07,0x74,0x07,0x65,0x07,0x78,0x07,0x74,0x07,0x20,0x07,0x77,0x07,0x68,0x07,0x69,0x07,0x63,0x07,0x68,0x07
 ;db 0x20,0x07,0x49,0x07,0x20,0x07,0x77,0x07,0x61,0x07,0x6e,0x07,0x74,0x07,0x20,0x07,0x74,0x07,0x6f,0x07,0x20,0x07,0x73,0x07,0x65,0x07,0x65,0x07,0x20,0x07,0x6f,0x07,0x6e,0x07,0x20,0x07,0x74,0x07,0x68,0x07,0x65,0x07,0x20,0x07,0x73,0x07,0x63,0x07,0x72,0x07,0x65,0x07,0x65,0x07,0x6e,0x07,0x2e,0x07,0x0a,0x07
 ;db 'here is some great sample text that i would really like to see read into RAM by int 13h!'
+
+qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
+qwerty_ascii_lower_end:
+qwerty_ascii_upper: db 0,0,0x21,'@',0x23,'$','%','^','&','*','(',')','_','+',0,0,'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,'A','S','D','F','G','H','J','K','L', ':', '"', '~', 0, 0x7c, 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' '
+qwerty_ascii_upper_end:
+
+;times 10240 - ($ - $$) db 0xb3
 
