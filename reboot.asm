@@ -31,6 +31,9 @@ cli ; we are getting ready don't let anyone interrupt us
 
 mov [boot_dev], dl ; save boot device so we don't have to write a USB driver!
 
+mov ax, [0x463]
+mov [video_port], ax
+
 ; first let's reset the disk subsystem just for fun
 mov ah, 0
 ; dl is still cool
@@ -39,10 +42,6 @@ push 0xb800
 pop es
 xor di, di
 ; output is: ah status, cf yay/neigh
-mov ax, 0xbead
-call hexprint_ax
-mov eax, 0x12345678
-call hexprint_eax
 
 jmp await_keypress
 
@@ -161,7 +160,7 @@ await_keypress:
   jmp short $
 
 keyboard_handler:
-.spin:
+.spin: ; ahhahahahaha dizzy loop
   in al, 0x64
   and al, 0x01
   jz short .spin
@@ -172,8 +171,8 @@ keyboard_handler:
   ;      'out' used to be called poke(emon)
 
   ; is this a control character?
-;  cmp al, 0x0e
-;  je .backspace
+  cmp al, 0x0e
+  je .backspace
   cmp al, 0x2a
   je short .shift_down
   cmp al, 0x36
@@ -183,8 +182,8 @@ keyboard_handler:
   cmp al, 0xb6
   je short .shift_up
 
-  cmp al, 58
-  jae .next
+  cmp al, qwerty_ascii_lower_end - qwerty_ascii_lower + 1
+  jae short .next
 
   jmp short .translate
 
@@ -195,6 +194,15 @@ keyboard_handler:
 .shift_up:
   and byte [shift_flag], 0
   jmp short .next
+
+.backspace:
+  test di, di
+  jz short .next
+  sub di, 2
+  mov al, 0x20
+  stosb
+  dec di
+  jmp short .reset_cursor_to_di
 
 .crlf:
   jmp short .next
@@ -208,11 +216,33 @@ keyboard_handler:
   xlatb
   cmp al, 0 ; if al is zero, don't draw it
   je short .next
-  
+
 .not_full:
   stosb
   mov al, 0x07
   stosb
+
+.reset_cursor_to_di:
+  ; cursor position is row+(col*80), which happens to be half of di
+  mov bx, di
+  shr bx, 1
+
+  mov dx, [video_port]
+  mov al, 0x0f ; selects the low word of the cursor position
+  out dx, al
+
+  inc dx
+  mov ax, bx
+  and ax, 0xff
+  out dx, al
+
+  mov dx, [video_port]
+  mov al, 0x0e ; selects the high word of the cursor position
+  out dx, al
+
+  inc dx
+  mov al, bh
+  out dx, al
 
 .next:
   ; don't be lame and leave the brogrammable interrupt controller hangin'
@@ -224,13 +254,10 @@ keyboard_handler:
   iret
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
+qwerty_ascii_lower_end:
 qwerty_ascii_upper: db 0,0,0x21,'@',0x23,'$','%','^','&','*','(',')','_','+',0,0,'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,'A','S','D','F','G','H','J','K','L', ':', '"', '~', 0, 0x7c, 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' '
+qwerty_ascii_upper_end:
 
-shift_flag: db 0
-
-boot_dev: dw 0
-last_sector: dw 0
-last_vid_byte: dw 0
 BEGIN_OVERWRITE:
 times 444 - ($ - $$) db 0x00 ; round out the boot sector
 
@@ -239,7 +266,14 @@ dw 0x0 ; why oughtn't i utilize this word? #OCCUPYBOOTSECTORS
 times 510 - ($ - $$) db 0xcd ; partition table
 dw 0xaa55
 
-;code_page_2:
+shift_flag: db 0
+
+video_port: dw 0
+boot_dev: dw 0
+last_sector: dw 0
+last_vid_byte: dw 0
+
+code_page_2:
 ;db 0x54,0x07,0x68,0x07,0x69,0x07,0x73,0x07,0x20,0x07,0x69,0x07,0x73,0x07,0x20,0x07,0x73,0x07,0x6f,0x07,0x6d,0x07,0x65,0x07,0x20,0x07,0x73,0x07,0x61,0x07,0x6d,0x07,0x70,0x07,0x6c,0x07,0x65,0x07,0x20,0x07,0x74,0x07,0x65,0x07,0x78,0x07,0x74,0x07,0x20,0x07,0x77,0x07,0x68,0x07,0x69,0x07,0x63,0x07,0x68,0x07
 ;db 0x20,0x07,0x49,0x07,0x20,0x07,0x77,0x07,0x61,0x07,0x6e,0x07,0x74,0x07,0x20,0x07,0x74,0x07,0x6f,0x07,0x20,0x07,0x73,0x07,0x65,0x07,0x65,0x07,0x20,0x07,0x6f,0x07,0x6e,0x07,0x20,0x07,0x74,0x07,0x68,0x07,0x65,0x07,0x20,0x07,0x73,0x07,0x63,0x07,0x72,0x07,0x65,0x07,0x65,0x07,0x6e,0x07,0x2e,0x07,0x0a,0x07
 ;db 'here is some great sample text that i would really like to see read into RAM by int 13h!'
