@@ -76,24 +76,11 @@ mov dh, 0 ; head #, can be zero
 mov dl, [boot_dev]
 push 0x0
 pop es
-mov bx, code_page_2
+mov bx, sector_2
 int 0x13
 jc int13_error
 
-; otherwise we should have a good keymap now!
-
-push 0xb800
-pop es
-xor di, di
-
-mov eax, [code_page_2]
-call hexprint_eax
-
-mov eax, [code_page_2+4]
-call hexprint_eax
-;hlt
-
-; output is: ah status, cf yay/neigh
+; now we should have a good keymap!
 
 jmp await_keypress
 
@@ -106,63 +93,7 @@ int13_error:
   stosb
   hlt
 
-; al ah bl cl ch dl dh  di    es
-; 00 00 00 ff ff 02 0f 00 00 00 00 -- from thinkpad t42
-; 0a 00 00 ff cc 02 fe 00 00 00 00 -- from the ASUS netbook
-; 00 00 04 12 4f 01 01 de ef 00 f0 -- from bochs
-
-; thinkpad max sector number: 0b1111111111111, that's 0x05ff or 1535
-;     asus max sector number: 0b1111111001100, that's 0x05cc or 1484
-;    bochs max sector number: 0b1001001001111, that's 0x014f or  335
-
-; thinkpad max head number: 0x0f
-;     asus max head number: 0xfe
-;    bochs max head number: 0x01
-
-
-;call hexprint_al ; print al
-;shr ax, 8
-;call hexprint_al ; print ah
-;mov ax, bx
-;call hexprint_al ; print bl
-;mov ax, cx
-;call hexprint_al ; print cl
-;shr ax, 8
-;call hexprint_al ; print ch
-;mov ax, dx
-;call hexprint_al ; print dl
-;shr ax, 8
-;call hexprint_al ; print dh
-;pop ax ; di
-;call hexprint_al ; print lo byte of di
-;shr ax, 8
-;call hexprint_al ; print hi byte of di
-;pop ax ; es
-;call hexprint_al ; print lo byte of es
-;shr ax, 8
-;call hexprint_al ; print hi byte of es
-;mov al, '!'
-;stosb
-;inc di
-
 jmp await_keypress
-
-; can't we all agree on the address of lba sector zero?
-; lba 0:
-; sector = (lba mod total_sectors) + 1
-; cylhead = lba div total_sectors
-; head = cylhead mod (total_heads + 1)
-; cyl = cylhead div (total_heads + 1)
-; so it looks like head and cyl are the quotient and remainder of:
-;    cylhead div (total heads + 1)
-
-lba_to_chs: ; input is ax = lba, output is suitable for int 13 ah=02 or ah=03
-; output:
-; ch = low byte of cyl#
-; cl bits 0-5: sector num
-; cl bits 6,7: high bits of cyl #
-; dh = head #
-;  ret
 
 hexprint_eax:
   push eax
@@ -199,11 +130,6 @@ hexprint_low_nibble_of_al:
   stosw
 
   ret
-
-; thing has a couple parts:
-; read the kernel from the disk
-
-; read us up eh!
 
 await_keypress:
 
@@ -331,15 +257,10 @@ dw 0x0 ; why oughtn't i utilize this word? #OCCUPYBOOTSECTORS
 times 510 - ($ - $$) db 0xcd ; partition table
 dw 0xaa55
 
-code_page_2:
-;db 0x54,0x07,0x68,0x07,0x69,0x07,0x73,0x07,0x20,0x07,0x69,0x07,0x73,0x07,0x20,0x07,0x73,0x07,0x6f,0x07,0x6d,0x07,0x65,0x07,0x20,0x07,0x73,0x07,0x61,0x07,0x6d,0x07,0x70,0x07,0x6c,0x07,0x65,0x07,0x20,0x07,0x74,0x07,0x65,0x07,0x78,0x07,0x74,0x07,0x20,0x07,0x77,0x07,0x68,0x07,0x69,0x07,0x63,0x07,0x68,0x07
-;db 0x20,0x07,0x49,0x07,0x20,0x07,0x77,0x07,0x61,0x07,0x6e,0x07,0x74,0x07,0x20,0x07,0x74,0x07,0x6f,0x07,0x20,0x07,0x73,0x07,0x65,0x07,0x65,0x07,0x20,0x07,0x6f,0x07,0x6e,0x07,0x20,0x07,0x74,0x07,0x68,0x07,0x65,0x07,0x20,0x07,0x73,0x07,0x63,0x07,0x72,0x07,0x65,0x07,0x65,0x07,0x6e,0x07,0x2e,0x07,0x0a,0x07
-;db 'here is some great sample text that i would really like to see read into RAM by int 13h!'
+sector_2:
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
 qwerty_ascii_lower_end:
 qwerty_ascii_upper: db 0,0,0x21,'@',0x23,'$','%','^','&','*','(',')','_','+',0,0,'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,'A','S','D','F','G','H','J','K','L', ':', '"', '~', 0, 0x7c, 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' '
 qwerty_ascii_upper_end:
-
-;times 10240 - ($ - $$) db 0xb3
 
