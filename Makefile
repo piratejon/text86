@@ -5,6 +5,8 @@ LDFLAGS=-lm
 compile:
 	nasm reboot.asm
 	dd if=reboot of=st251.img conv=notrunc
+	ndisasm -o 0x7c00 reboot > disasm
+	xxd -l 512 reboot
 
 run: compile
 	bochs -f ./testing

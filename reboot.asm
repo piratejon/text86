@@ -12,9 +12,6 @@ mov es, di
 
 mov [boot_dev], dl ; save boot device so we don't have to write a USB driver!
 
-mov ax, [0x463] ; get video port address from bios data area
-mov [video_port], ax ; save video port address for later amusement
-
 ; first let's reset the disk subsystem just for fun
 mov ah, 0
 ; dl is still cool
@@ -41,14 +38,6 @@ shr dh, 6
 mov dl, ch
 mov [max_cylinder], dx
 
-; now let us read a great sector
-;mov ah, 2 ; function= read to memory
-;mov al, 1 ; number of sectors to read
-;mov ch, 0 ; low 8 bits of cyl#, can be zero
-;mov cl, 0x02 ; skip sector 1 since it should already be loaded
-;mov dh, 0 ; head #, can be zero
-;mov dl, [boot_dev]
-
 ; the following two lines are two bytes less than mov eax, 1
 xor eax, eax
 inc ax ; sector zero is loaded at 0x7c00 already
@@ -63,13 +52,13 @@ mov bx, sector_2
 int 0x13
 jc int13_error
 
-push 0xb800
-pop es
-xor di, di
+; the config sector is read, so we can now read/write it
+
+mov ax, [0x463] ; get video port address from bios data area
+mov [video_port], ax ; save video port address for later amusement
 
 ; now we should have a good keymap!
-
-jmp await_keypress
+jmp initialize_keyboard
 
 lba_to_chs: ; converts zero-indexed LBA sector eax to int13 CHS
   cdq ; extend eax sign through edx so we can divide reasonably
@@ -95,7 +84,8 @@ lba_to_chs: ; converts zero-indexed LBA sector eax to int13 CHS
   ret
 
 chs_to_lba: ; converts a int13 CHS to linear LBA in eax
-  ret
+; is this ever needed?
+;  ret
 
 int13_error:
   push word 0xb800
@@ -106,21 +96,21 @@ int13_error:
   stosb
   hlt
 
-hexprint_eax:
-  push eax
-  call hexprint_ax
-  pop eax
-  shr eax, 16
-  call hexprint_ax
-  ret
-
-hexprint_ax:
-  push ax
-  call hexprint_al
-  pop ax
-  shr ax, 8
-  call hexprint_al
-  ret
+;hexprint_eax:
+;  push eax
+;  call hexprint_ax
+;  pop eax
+;  shr eax, 16
+;  call hexprint_ax
+;  ret
+;
+;hexprint_ax:
+;  push ax
+;  call hexprint_al
+;  pop ax
+;  shr ax, 8
+;  call hexprint_al
+;  ret
 
 hexprint_al:
   push ax
@@ -142,17 +132,17 @@ hexprint_low_nibble_of_al:
 
   ret
 
-await_keypress:
+initialize_keyboard:
+  xor di, di
+  mov ds, di
 
-  cli
-  push word 0
-  pop ds
-  mov word[ds:(9*4)], keyboard_handler
-  mov word[ds:(9*4)+2], 0
+  mov si, [write_buffer_addr]
 
   push 0xb800
   pop es
-  xor di, di
+
+  mov word[ds:(9*4)], keyboard_handler
+  mov word[ds:(9*4)+2], 0
 
   sti
   jmp short $
@@ -198,13 +188,15 @@ keyboard_handler:
 .backspace:
   test di, di
   jz short .next
-  sub di, 2
   mov al, 0x20
-  stosb
-  dec di
+  dec si
+  sub di, 2
+  call draw_character
   jmp short .reset_cursor_to_di
 
 .crlf:
+  mov [si], al
+  inc si
   push word 160
   mov ax, di
   cwd
@@ -224,25 +216,89 @@ keyboard_handler:
   cmp al, 0 ; if al is zero, don't draw it
   je short .next
 
-.not_full:
-  stosb
-  mov al, 0x07
-  stosb
+  call draw_character
+  inc si
+  add di, 2
+
+  mov ax, [write_buffer_addr]
+  add ax, 0x200
+  cmp si, ax
+  jl .reset_cursor_to_di
+  call write_sector
+
+  cmp di, 0x600 ; lol
+  jl .reset_cursor_to_di
+  ; just scroll the view here
+  ;call scroll
 
 .reset_cursor_to_di:
   call reset_cursor_to_di
-
-  ;cmp di, 0x200
-  ;call write_buffer
 
 .next:
   ; don't be lame and leave the brogrammable interrupt controller hangin'
   mov al, 0x20
   out 0x20, al
 
-  jnz short .spin
+  jnz .spin
                 
   iret
+
+write_sector: ; this is called when the write buffer is full
+  push es ; save es since int13 requires we change it
+
+  sub si, 0x200
+  mov eax, [last_sector]
+  inc eax
+  mov [last_sector], eax
+  call lba_to_chs
+  mov ah, 3
+  mov al, 1
+  mov dl, [boot_dev]
+  xor bx, bx
+  mov es, bx
+  mov bx, si
+  int 0x13
+  jc int13_error
+  add si, 0x200 ; get buffer back to right place
+
+  ; update the config sector as well
+  ; es should still be zero
+  mov eax, 2
+  call lba_to_chs
+  ; es should still be zero
+  mov bx, sector_2
+  mov ah, 3
+  mov al, 1
+  mov dl, [boot_dev]
+  int 0x13
+  jc int13_error
+
+  pop es ; restore old es value
+  ret
+
+draw_character:
+  mov [si], al
+  mov [es:di], al
+  mov [es:di+1], byte 0x07
+  ret
+
+render:
+  ; Copies text from memory buffer ds:si to video buffer es:di
+  ; Stops at 0xff without copying it, puts the cursor where it would be.
+  ; Bytes are not 1-1 since video memory has an attribute byte.
+  ; The attribute byte is set to 0x07.
+
+  lodsb
+  cmp al, 0xff
+  jz .done
+
+  mov ah, 0x07
+  stosw
+  jmp render
+
+.done:
+  call reset_cursor_to_di
+  ret
 
 reset_cursor_to_di:
   ; cursor position is row+(col*80), which happens to be half of di
@@ -278,20 +334,29 @@ write_buffer:
   mov dl, [boot_dev]
   pop bx
   int 0x13
+  jc int13_error
   ; carry flag set on error
   ret
 
-times 510 - ($ - $$) db 0xcd ; partition table
+max_sector: db 0
+max_head: db 0
+max_cylinder: dw 0
+
+times 510 - ($ - $$) db 'z' ; position the boot sector marker
 dw 0xaa55
 
 sector_2:
 
+read_buffer_addr: dw 0x500 ; data stored from 0x500-0x6ff before writing to disk
+write_buffer_addr: dw 0x700 ; data read from disk to 0x700-0x8ff when reading
+
+; these values are overwritten during boot
 boot_dev: db 0
 shift_flag: db 0
-max_sector: db 0
-max_head: db 0
-max_cylinder: dw 0
 video_port: dw 0
+
+last_sector: dd 2 ; 1 is the boot sector, 2 is the keymap
+; 2 here means, this is a new file/install
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
 qwerty_ascii_lower_end:
