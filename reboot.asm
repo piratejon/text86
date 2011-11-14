@@ -68,11 +68,18 @@ mov dl, ch
 mov [max_cylinder], dx
 
 ; now let us read a great sector
-mov ah, 2 ; function= read to memory
+;mov ah, 2 ; function= read to memory
+;mov al, 1 ; number of sectors to read
+;mov ch, 0 ; low 8 bits of cyl#, can be zero
+;mov cl, 0x02 ; skip sector 1 since it should already be loaded
+;mov dh, 0 ; head #, can be zero
+;mov dl, [boot_dev]
+
+mov eax, 83639
+call lba_to_chs
+mov ah, 2 ; int13 function= read to memory
 mov al, 1 ; number of sectors to read
-mov ch, 0 ; low 8 bits of cyl#, can be zero
-mov cl, 0x02 ; skip sector 0 since it should already be loaded
-mov dh, 0 ; head #, can be zero
+; cl, ch, and dh should be set by lba_to_chs
 mov dl, [boot_dev]
 push 0x0
 pop es
@@ -80,9 +87,63 @@ mov bx, sector_2
 int 0x13
 jc int13_error
 
+push 0xb800
+pop es
+xor di, di
+
+mov eax, [sector_2]
+call hexprint_eax
+
 ; now we should have a good keymap!
 
 jmp await_keypress
+
+lba_to_chs: ; converts zero-indexed LBA sector eax to int13 CHS
+; conversion formula:
+  ; sector = (lba % max_sector ) + 1
+  ; cylhead = ( lba / max_sector )
+  ; head = cylhead % (max_head+1)
+  ; cylinder = cylhead / (max_head+1)
+
+; registers:
+  ; ch = low 8 bits of cylinder #
+  ; cl bits 0-5: sector #
+  ; cl bits 6-7: high 2 bits of cylinder #
+  ; dh = head #
+
+; cwd/cdq sign-extends al/ax into dx:ax or edx:eax
+
+; idiv r/m
+  ; divides ah:al by r/m8, al=quotient, ah=remainder
+  ; divides dx:ax by r/m16, ax=quotient, dx=remainder
+  ; divides edx:eax by r/m32, eax=quotient, dx=remainder
+
+  push ebx
+  cdq ; extend eax sign through edx so we can divide reasonably
+  movsx ebx, byte [max_sector]
+  idiv ebx
+  ; now eax contains cylhead and edx contains sector
+  ; TODO: assert edx bits 7-31 are zero since sector is a six-bit positive #
+  mov cl, dl ; got the sector number into its right place
+  inc cl ; complete the formula
+  cdq ; extend cylhead sign through edx so it can be divided by max_head+1
+  movsx ebx, byte [max_head]
+  inc ebx ; since we are dividing by max_head+1
+  idiv ebx
+  ; now eax contains cylinder # and edx contains head #
+  ; TODO: assert eax bits 11-31 are zero since cyl is a 10-bit positive #
+  ; TODO: assert edx bits 8-31 are zero since head is a 8-bit positive #
+  mov dh, dl ; get head # out of edx into proper register
+  mov ch, al ; an easy one
+  shl ah, 6 ; get the bits into the proper position
+  ; and ah, 0xc0 ; not necessary because SHL clears the LSB
+  or cl, ah
+  pop ebx
+
+  ret
+
+chs_to_lba: ; converts a int13 CHS to linear LBA in eax
+  ret
 
 int13_error:
   push word 0xb800
@@ -92,8 +153,6 @@ int13_error:
   mov al, 'e'
   stosb
   hlt
-
-jmp await_keypress
 
 hexprint_eax:
   push eax
@@ -145,6 +204,25 @@ await_keypress:
 
   sti
   jmp short $
+
+
+boot_dev: db 0
+shift_flag: db 0
+max_sector: db 0
+max_head: db 0
+max_cylinder: dw 0
+video_port: dw 0
+last_vid_byte: dw 0
+
+BEGIN_OVERWRITE:
+times 444 - ($ - $$) db 0x00 ; round out the boot sector
+
+dw 0x0 ; why oughtn't i utilize this word? #OCCUPYBOOTSECTORS
+
+times 510 - ($ - $$) db 0xcd ; partition table
+dw 0xaa55
+
+sector_2:
 
 keyboard_handler:
 .spin: ; ahhahahahaha dizzy loop
@@ -209,7 +287,26 @@ keyboard_handler:
   mov al, 0x07
   stosb
 
+  mov al, 0xff
+  stosb
+  mov al, 0x00
+  stosb
+
+  sub di, 2
+
 .reset_cursor_to_di:
+  call reset_cursor_to_di
+
+.next:
+  ; don't be lame and leave the brogrammable interrupt controller hangin'
+  mov al, 0x20
+  out 0x20, al
+
+  jnz short .spin
+                
+  iret
+
+reset_cursor_to_di:
   ; cursor position is row+(col*80), which happens to be half of di
   mov bx, di
   shr bx, 1
@@ -231,33 +328,13 @@ keyboard_handler:
   mov al, bh
   out dx, al
 
-.next:
-  ; don't be lame and leave the brogrammable interrupt controller hangin'
-  mov al, 0x20
-  out 0x20, al
+  ret
 
-  jnz short .spin
-                
-  iret
-
-boot_dev: db 0
-shift_flag: db 0
-max_sector: db 0
-max_head: db 0
-max_cylinder: dw 0
-video_port: dw 0
-last_sector: dw 0
-last_vid_byte: dw 0
-
-BEGIN_OVERWRITE:
-times 444 - ($ - $$) db 0x00 ; round out the boot sector
-
-dw 0x0 ; why oughtn't i utilize this word? #OCCUPYBOOTSECTORS
-
-times 510 - ($ - $$) db 0xcd ; partition table
-dw 0xaa55
-
-sector_2:
+last_pos_written: dd 0
+                ; initial values for data
+last_cylinder: dw 0  ; 0
+last_head: dw 0 ; 0
+last_sector: dw 0  ; 2
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
 qwerty_ascii_lower_end:
