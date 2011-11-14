@@ -75,7 +75,7 @@ mov [max_cylinder], dx
 ;mov dh, 0 ; head #, can be zero
 ;mov dl, [boot_dev]
 
-mov eax, 83639
+mov eax, 1 ; sector zero is loaded at 0x7c00 already!
 call lba_to_chs
 mov ah, 2 ; int13 function= read to memory
 mov al, 1 ; number of sectors to read
@@ -286,13 +286,6 @@ keyboard_handler:
   stosb
   mov al, 0x07
   stosb
-
-  mov al, 0xff
-  stosb
-  mov al, 0x00
-  stosb
-
-  sub di, 2
 
 .reset_cursor_to_di:
   call reset_cursor_to_di
