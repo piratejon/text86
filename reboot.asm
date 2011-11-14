@@ -290,6 +290,9 @@ keyboard_handler:
 .reset_cursor_to_di:
   call reset_cursor_to_di
 
+  cmp di, 0x200
+  call write_buffer
+
 .next:
   ; don't be lame and leave the brogrammable interrupt controller hangin'
   mov al, 0x20
@@ -321,6 +324,18 @@ reset_cursor_to_di:
   mov al, bh
   out dx, al
 
+  ret
+
+write_buffer:
+  ; write 0x200 bytes from es:0 to sector eax
+  mov eax, 2
+  call lba_to_chs
+  mov ah, 3
+  mov al, 1
+  mov dl, [boot_dev]
+  mov bx, 0
+  int 0x13
+  jc int13_error
   ret
 
 last_pos_written: dd 0
