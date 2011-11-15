@@ -17,3 +17,6 @@ parse: fat12parse.c
 write:
 	sudo dd if=reboot of=/dev/sdb bs=512 count=1
 
+reimage:
+	./c 2>/dev/null > st251.img
+

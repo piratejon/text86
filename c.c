@@ -2,13 +2,14 @@
 #include <stdio.h>
 
 int main ( int arfc, char ** arfv ) {
-  if ( arfc != 2 ) {
-    printf("need a single argument\n");
-    return 0;
-  }
+  int i, limit;
 
-  int limit = atoi(arfv[1]);
-  int i;
+  if ( arfc != 2 ) {
+    fprintf(stderr, "no argument, defaulting to 820*6*17*512\n");
+    limit = 820*6*17*512;
+  } else {
+    limit = atoi(arfv[1]);
+  }
 
   for ( i = 0; i < (limit/(sizeof i)); ++ i ) {
     fwrite(&i, sizeof i, 1, stdout);
