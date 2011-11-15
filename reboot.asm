@@ -232,7 +232,7 @@ keyboard_handler:
   mov byte [si], 0xff
 
 .onemoretry:
-  cmp di, 300 ; 0xc00/0xfa0 is 76.8% of the screen, that sounds reasonable
+  cmp di, 0xc00 ; 0xc00/0xfa0 is 76.8% of the screen, that sounds reasonable
   jl .reset_cursor_to_di
   ; just scroll the view here
   call scroll
@@ -267,8 +267,14 @@ scroll: ; scroll back one line, copying 160-di to 0-(di-160)
   shr cx, 1
   rep movsw
 
+  mov cx, 80
+  mov ax, 0x0720
+  rep stosw
+
   pop si
   pop ds
+
+  sub di, 160
 
 .return:
   ret
@@ -294,7 +300,7 @@ write_sector: ; this is called when the write buffer is full
 
   ; update the config sector as well
   ; es should still be zero
-  mov eax, 2
+  mov eax, 1 ; this is 1 since lba is zero-indexed
   call lba_to_chs
   ; es should still be zero
   mov bx, sector_2
@@ -373,8 +379,8 @@ write_buffer_addr: dw 0x700 ; data read from disk to 0x700-0x8ff when reading
 ; these values are overwritten during boot
 shift_flag: db 0
 
-last_sector: dd 2 ; 1 is the boot sector, 2 is the keymap
-; 2 here means, this is a new file/install
+last_sector: dd 1 ; 0 is the boot sector, 1 is the config sector
+; this value is 1 on a "fresh install"
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
 qwerty_ascii_lower_end:
