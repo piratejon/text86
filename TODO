@@ -1,0 +1,6 @@
+* configurable keymap
+* manual save-on-demand (i.e. Ctrl+S or whatever)
+* more usage of color! Yeah!! To what end, I don't know yet!!
+* FAT support
+* status bar (words/characters/lines, per session/total)
+* debug mode (see if it works on your system before it loses your whole novel!)
