@@ -148,6 +148,7 @@ initialize_keyboard:
   jmp short $
 
 keyboard_handler:
+  cli
 .spin: ; ahhahahahaha dizzy loop
   in al, 0x64
   and al, 0x01
@@ -192,6 +193,7 @@ keyboard_handler:
   dec si
   sub di, 2
   call draw_character
+  mov byte [si], 0xff
   jmp short .reset_cursor_to_di
 
 .crlf:
@@ -218,18 +220,22 @@ keyboard_handler:
 
   call draw_character
   inc si
+  mov byte [si], 0xff
   add di, 2
 
   mov ax, [write_buffer_addr]
   add ax, 0x200
   cmp si, ax
-  jl .reset_cursor_to_di
+  jl .onemoretry
   call write_sector
+  sub si, 0x200
+  mov byte [si], 0xff
 
-  cmp di, 0x600 ; lol
+.onemoretry:
+  cmp di, 300 ; 0xc00/0xfa0 is 76.8% of the screen, that sounds reasonable
   jl .reset_cursor_to_di
   ; just scroll the view here
-  ;call scroll
+  call scroll
 
 .reset_cursor_to_di:
   call reset_cursor_to_di
@@ -239,9 +245,33 @@ keyboard_handler:
   mov al, 0x20
   out 0x20, al
 
-  jnz .spin
-                
+  sti
+
   iret
+
+scroll: ; scroll back one line, copying 160-di to 0-(di-160)
+  mov cx, di
+  sub cx, 160
+
+  cmp cx, 0
+  jle .return
+
+  push ds
+  push si
+
+  mov si, 160
+  xor di, di
+  push es
+  pop ds
+
+  shr cx, 1
+  rep movsw
+
+  pop si
+  pop ds
+
+.return:
+  ret
 
 write_sector: ; this is called when the write buffer is full
   push es ; save es since int13 requires we change it
@@ -257,6 +287,7 @@ write_sector: ; this is called when the write buffer is full
   xor bx, bx
   mov es, bx
   mov bx, si
+  clc
   int 0x13
   jc int13_error
   add si, 0x200 ; get buffer back to right place
@@ -270,6 +301,7 @@ write_sector: ; this is called when the write buffer is full
   mov ah, 3
   mov al, 1
   mov dl, [boot_dev]
+  clc
   int 0x13
   jc int13_error
 
@@ -300,6 +332,17 @@ render:
   call reset_cursor_to_di
   ret
 
+max_sector: db 0
+max_head: db 0
+max_cylinder: dw 0
+boot_dev: db 0
+video_port: dw 0
+
+times 510 - ($ - $$) db 'z' ; position the boot sector marker
+dw 0xaa55
+
+sector_2:
+
 reset_cursor_to_di:
   ; cursor position is row+(col*80), which happens to be half of di
   mov bx, di
@@ -324,36 +367,11 @@ reset_cursor_to_di:
 
   ret
 
-write_buffer:
-  ; write 1 sector from es:bx to sector eax
-  push bx
-  ; eax is parameter
-  call lba_to_chs ; retain cl, ch, dh
-  mov ah, 3
-  mov al, 1
-  mov dl, [boot_dev]
-  pop bx
-  int 0x13
-  jc int13_error
-  ; carry flag set on error
-  ret
-
-max_sector: db 0
-max_head: db 0
-max_cylinder: dw 0
-
-times 510 - ($ - $$) db 'z' ; position the boot sector marker
-dw 0xaa55
-
-sector_2:
-
 read_buffer_addr: dw 0x500 ; data stored from 0x500-0x6ff before writing to disk
 write_buffer_addr: dw 0x700 ; data read from disk to 0x700-0x8ff when reading
 
 ; these values are overwritten during boot
-boot_dev: db 0
 shift_flag: db 0
-video_port: dw 0
 
 last_sector: dd 2 ; 1 is the boot sector, 2 is the keymap
 ; 2 here means, this is a new file/install
