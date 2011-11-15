@@ -174,40 +174,40 @@ keyboard_handler:
   je short .shift_up
   cmp al, 0x1c
   je short .crlf
+  cmp al, 0x1d
+  je short .ctrl_down
+  cmp al, 0x9d
+  je short .ctrl_up
 
   cmp al, qwerty_ascii_lower_end - qwerty_ascii_lower + 1
   jae short .next
 
   jmp short .translate
 
+.ctrl_down:
+  or byte [shift_flag], 0x02
+  jmp short .next
+
+.ctrl_up:
+  and byte [shift_flag], 0xfd
+  jmp short .next
+
 .shift_down:
-  or byte [shift_flag], 1
+  or byte [shift_flag], 0x01
   jmp short .next
 
 .shift_up:
-  and byte [shift_flag], 0
+  and byte [shift_flag], 0xfe
   jmp short .next
 
 .backspace:
   test di, di
   jz short .next
-  mov al, 0x20
-  dec si
-  sub di, 2
-  call draw_character
-  mov byte [si], 0xff
+  call backspace
   jmp short .reset_cursor_to_di
 
 .crlf:
-  mov [si], al
-  inc si
-  push word 160
-  mov ax, di
-  cwd
-  idiv word [esp]
-  add esp, 2
-  sub di, dx
-  add di, 160
+  call crlf
   jmp short .reset_cursor_to_di
 
 .translate:
@@ -217,22 +217,17 @@ keyboard_handler:
   mov bx, qwerty_ascii_lower
 .upper:
   xlatb
+
+  call control_handler ; this will set al to zero if we shouldn't print it
+
   cmp al, 0 ; if al is zero, don't draw it
   je short .next
 
   call draw_character
   inc si
-  mov byte [si], 0xff
   add di, 2
 
-  mov ax, [write_buffer_addr]
-  add ax, 0x200
-  cmp si, ax
-  jl .onemoretry
-  call write_sector
-  sub si, 0x200
-  mov [es:di-1], byte 0x20
-  mov byte [si], 0xff
+  call check_buffer
 
 .onemoretry:
   cmp di, 0xc00 ; 0xc00/0xfa0 is 76.8% of the screen, that sounds reasonable
@@ -251,6 +246,36 @@ keyboard_handler:
   sti
 
   iret
+
+check_buffer:
+  mov ax, [write_buffer_addr]
+  add ax, 0x200
+  cmp si, ax
+  jl .bottom
+  call write_sector
+  sub si, 0x200
+  mov [es:di-1], byte 0x20
+  mov byte [si], 0xff
+
+.bottom:
+  ret
+
+control_handler: ; control is held down, al is the ASCII key.
+  test byte [shift_flag], 2
+  jz .no_control
+  cmp al, 's'
+  jne .return
+  ; well they are holding down ctrl and pressed s without shift, so save
+  ; need to save a partial sector and not blank this one
+  call write_sector
+  cmp si, 0x900
+  jl .return
+  sub word [last_sector], 2 ; re-use this sector if we haven't filled it yet
+.return:
+  ; set al to zero to avoid printing it
+  mov al, 0
+.no_control:
+  ret
 
 scroll: ; scroll back one line, copying 160-di to 0-(di-160)
   mov cx, di
@@ -282,10 +307,20 @@ scroll: ; scroll back one line, copying 160-di to 0-(di-160)
 .return:
   ret
 
-write_sector: ; this is called when the write buffer is full
+write_sector: ; this is called when the buffer should be saved
   push es ; save es since int13 requires we change it
 
-  sub si, 0x200
+  ; si's "origin" is 0x700. in a partial-sector save si should be retained
+  ; if it is an automatic save si should be reset to 0x700
+  ; also when the partial save occurs it should only write from 0x700 to si
+  ; not from 0x700-0x8ff. the rest of the buffer must be zeroed. this can't
+  ; be too difficult. it sounds like i need three separate functions:
+  ; save 0x700-to-si, clear si-to-0x900, and reset si to 0x700
+
+  ; si is never on a valid character, so we can zero it safely
+
+  ; don't need to touch si to write to disk (es:bx)
+
   mov eax, [last_sector]
   inc eax
   mov [last_sector], eax
@@ -293,13 +328,12 @@ write_sector: ; this is called when the write buffer is full
   mov ah, 3
   mov al, 1
   mov dl, [boot_dev]
-  xor bx, bx
-  mov es, bx
-  mov bx, si
+  push word 0
+  pop es
+  mov bx, [write_buffer_addr]
   clc
   int 0x13
   jc int13_error
-  add si, 0x200 ; get buffer back to right place
 
   ; update the config sector as well
   ; es should still be zero
@@ -323,23 +357,23 @@ draw_character:
   mov [es:di+1], byte 0x07
   ret
 
-render:
-  ; Copies text from memory buffer ds:si to video buffer es:di
-  ; Stops at 0xff without copying it, puts the cursor where it would be.
-  ; Bytes are not 1-1 since video memory has an attribute byte.
-  ; The attribute byte is set to 0x07.
-
-  lodsb
-  cmp al, 0xff
-  jz .done
-
-  mov ah, 0x07
-  stosw
-  jmp render
-
-.done:
-  call reset_cursor_to_di
-  ret
+;render:
+;  ; Copies text from memory buffer ds:si to video buffer es:di
+;  ; Stops at 0xff without copying it, puts the cursor where it would be.
+;  ; Bytes are not 1-1 since video memory has an attribute byte.
+;  ; The attribute byte is set to 0x07.
+;
+;  lodsb
+;  cmp al, 0xff
+;  jz .done
+;
+;  mov ah, 0x07
+;  stosw
+;  jmp render
+;
+;.done:
+;  call reset_cursor_to_di
+;  ret
 
 max_sector: db 0
 max_head: db 0
@@ -351,6 +385,26 @@ times 510 - ($ - $$) db 'z' ; position the boot sector marker
 dw 0xaa55
 
 sector_2:
+
+backspace:
+  mov al, 0x20
+  dec si
+  sub di, 2
+  call draw_character
+  mov byte [si], 0xff
+  ret
+
+crlf:
+  mov [si], al
+  inc si
+  push word 160
+  mov ax, di
+  cwd
+  idiv word [esp]
+  add esp, 2
+  sub di, dx
+  add di, 160
+  ret
 
 reset_cursor_to_di:
   ; cursor position is row+(col*80), which happens to be half of di
