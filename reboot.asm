@@ -94,7 +94,7 @@ int13_error:
   call hexprint_al
   mov al, 'e'
   stosb
-  mov al, 0x20
+  mov al, 0x40
   stosb
   hlt
 
@@ -231,6 +231,7 @@ keyboard_handler:
   jl .onemoretry
   call write_sector
   sub si, 0x200
+  mov [es:di-1], byte 0x20
   mov byte [si], 0xff
 
 .onemoretry:
