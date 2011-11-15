@@ -2,21 +2,18 @@ CC=gcc
 CFLAGS=-Wall -g3
 LDFLAGS=-lm
 
-compile:
-	nasm reboot.asm
-	dd if=reboot of=st251.img conv=notrunc
-	ndisasm -o 0x7c00 reboot > disasm
-	xxd -l 512 reboot
-
-run: compile
-	bochs -f ./testing
+text86:
+	nasm text86.asm
+	dd if=text86 of=st251.img conv=notrunc
+	ndisasm -o 0x7c00 text86 > disasm
+	xxd -l 512 text86
 
 parse: fat12parse.c
 	$(CC) $(CFLAGS) $(LDFLAGS) fat12parse.c -o fat12parse
 
-write:
-	sudo dd if=reboot of=/dev/sdb bs=512 count=1
-
-reimage:
+reimage: c text86
 	./c 2>/dev/null > st251.img
+
+clean:
+	rm -rf c text86 st251.img
 
