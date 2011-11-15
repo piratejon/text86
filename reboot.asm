@@ -94,6 +94,8 @@ int13_error:
   call hexprint_al
   mov al, 'e'
   stosb
+  mov al, 0x20
+  stosb
   hlt
 
 ;hexprint_eax:
