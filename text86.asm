@@ -155,7 +155,9 @@ keyboard_handler:
   ;      'out' used to be called poke(emon)
 
   ; is this a control character?
+  push ax
   call control_check
+  pop ax
 
   cmp al, qwerty_ascii_lower_end - qwerty_ascii_lower + 1
   jae short .post_draw
@@ -175,7 +177,9 @@ keyboard_handler:
 ; control characters
   cmp al, 's'
   jne short .post_draw
+  push es
   call save
+  pop es
   ;call save_config
   jmp short .post_draw
 
@@ -288,19 +292,17 @@ control_check:
   ret
 
 .backspace:
-  push ax
   test di, di
   jz short .no_bksp
   cmp si, write_buffer
   je short .no_bksp
-  mov al, 0x20
+  mov ax, 0x0700
   dec si
   dec di
   dec di ; two decs is less than a sub
   mov [si], al
-  mov [di], al
+  mov [es:di], ax
 .no_bksp:
-  pop ax
 
   ret
 
@@ -318,10 +320,7 @@ control_check:
 
 save:
 ; writing [write_buffer,si) to the disk, one sector at a time
-  push es
-  push word 0
-  pop es
-
+; caller should set es properly
   mov bx, write_buffer
 
 .loop:
@@ -381,7 +380,7 @@ save:
   mov cx, 0x100 ; 0x100 words = 0x200 bytes, save time with same # bytes!
   and si, 0xfe00       ; ds is always zero
   mov di, write_buffer ; es is already zero in this function
-  rep stosw
+  rep movsw
   pop di
   pop si
   and si, 0x1ff
