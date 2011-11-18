@@ -2,29 +2,58 @@ top:
 bits 16
 org 0x7c00
 
+%define default_attribute 0x07
+
+%define kf_shift_on       0x01
+%define kf_shift_off      ~kf_shift_on
+%define kf_ctrl_on        0x02
+%define kf_ctrl_off       ~kf_ctrl_on
+
+%define max_sector        0x500
+%define max_head          0x502
+%define max_cylinder      0x504
+%define boot_dev          0x506
+%define keyboard_flags    0x508
+%define int13_cx          0x50a
+%define int13_dh          0x50c
+
+%define write_buffer      0x700
+%define end_of_buffer     0x7bff
+; no need to protect parts of the initialization routine, but want
+; to make sure code stays out of the data
+
+%define vga_io_port       0x463
+%define video_memory      0xb800
+
 boot_code:
 
 cli ; we are getting ready don't let anyone interrupt us
 
-xor di, di
-mov ds, di
-mov es, di
+; right off the bat we need zeros in ax, dh, es, ds, and di
 
-mov [boot_dev], dl ; save boot device so we don't have to write a USB driver!
+xor ax, ax
+push ax
+push ax
+mov dh, ah
+pop ds
+pop es
+mov di, ax
 
-; first let's reset the disk subsystem just for fun
-mov ah, 0
-; dl is still cool
+mov [boot_dev], dx ; save boot device
+; later, word [boot_dev] will make dh 0 and dl=boot_dev
+; byte [boot_dev] will make dl=boot_dev
+; costs two bytes with xor dh, dh
+
+; reset the disk subsystem
 int 0x13
-jc int13_error
+jc short int13_error
 
-; now disk subsystem is reset
-; now we can read info about the drive!
+; read info about drive
 mov ah, 8
 mov dl, [boot_dev]
-; es:di should already be 0:0
+; es:di should still be 0:0
 int 0x13
-jc int13_error
+jc short int13_error
 
 ; now we have good drive info!
 mov [max_head], dh
@@ -38,64 +67,45 @@ shr dh, 6
 mov dl, ch
 mov [max_cylinder], dx
 
-; the following two lines are two bytes less than mov eax, 1
-xor eax, eax
-inc ax ; sector zero is loaded at 0x7c00 already
-call lba_to_chs
-mov ah, 2 ; int13 function= read to memory
-mov al, 1 ; number of sectors to read
-; cl, ch, and dh should be set by lba_to_chs
+; statically set registers for fixed sector 1
+; ch = low 8 bits of cyl #
+; cl bits 0-5 = sector # (needs to be 2 since CHS sectors are 1-indexed)
+; dh = heads, should be 0 here
+push dword 2
+pop cx
+pop dx
+mov cx, [cx_int13]
+mov dh, [dh_int13]
 mov dl, [boot_dev]
-push 0x0
-pop es
-mov bx, sector_2
+mov ax, 0x0201 ; int13/ah=2, al=#sectors to read
+mov bx, config_sector
 int 0x13
-jc int13_error
+jc short int13_error
 
-; the config sector is read, so we can now read/write it
+mov eax, keyboard_handler
+mov [36], eax
 
-mov ax, [0x463] ; get video port address from bios data area
-mov [video_port], ax ; save video port address for later amusement
+mov si, write_buffer
 
-; now we should have a good keymap!
-jmp initialize_keyboard
+push video_memory
+pop es
 
-lba_to_chs: ; converts zero-indexed LBA sector eax to int13 CHS
-  cdq ; extend eax sign through edx so we can divide reasonably
-  movsx ebx, byte [max_sector]
-  idiv ebx
-  ; now eax contains cylhead and edx contains sector
-  ; TODO: assert edx bits 7-31 are zero since sector is a six-bit positive #
-  mov cl, dl ; got the sector number into its right place
-  inc cl ; complete the formula
-  cdq ; extend cylhead sign through edx so it can be divided by max_head+1
-  movsx ebx, byte [max_head]
-  inc ebx ; since we are dividing by max_head+1
-  idiv ebx
-  ; now eax contains cylinder # and edx contains head #
-  ; TODO: assert eax bits 11-31 are zero since cyl is a 10-bit positive #
-  ; TODO: assert edx bits 8-31 are zero since head is a 8-bit positive #
-  mov dh, dl ; get head # out of edx into proper register
-  mov ch, al ; an easy one
-  shl ah, 6 ; get the bits into the proper position
-  ; and ah, 0xc0 ; not necessary because SHL clears the LSB
-  or cl, ah
-
-  ret
-
-chs_to_lba: ; converts a int13 CHS to linear LBA in eax
-; is this ever needed?
-;  ret
+main_loop:
+  sti
+do_not_overwrite_the_following_code_with_data:
+  jmp short $
 
 int13_error:
-  push word 0xb800
+  push word video_memory
   pop es
   xor di, di
   call hexprint_al
-  mov al, 'e'
-  stosb
-  mov al, 0x40
-  stosb
+  mov ax, 0x4066
+;  mov al, 'e'
+;  stosb
+;  mov al, 0x40
+;  stosb
+  stosw
   hlt
 
 ;hexprint_eax:
@@ -123,7 +133,7 @@ hexprint_al:
   ret
 
 hexprint_low_nibble_of_al:
-  mov ah, 0x07
+  mov ah, default_attribute
   and al, 0x0f
   cmp al, 0x09
   jle short .num
@@ -133,21 +143,6 @@ hexprint_low_nibble_of_al:
   stosw
 
   ret
-
-initialize_keyboard:
-  xor di, di
-  mov ds, di
-
-  mov si, [write_buffer_addr]
-
-  push 0xb800
-  pop es
-
-  mov word[ds:(9*4)], keyboard_handler
-  mov word[ds:(9*4)+2], 0
-
-  sti
-  jmp short $
 
 keyboard_handler:
   cli
@@ -162,6 +157,102 @@ keyboard_handler:
   ;      'out' used to be called poke(emon)
 
   ; is this a control character?
+  call control_check
+
+  cmp al, qwerty_ascii_lower_end - qwerty_ascii_lower + 1
+  jae short .post_draw
+
+.translate:
+  mov bx, qwerty_ascii_upper
+  mov cl, [keyboard_flags]
+  test cl, kf_shift_on
+  jnz short .upper
+  mov bx, qwerty_ascii_lower
+.upper:
+  xlatb
+
+  test cl, kf_ctrl_on
+  jz short .draw
+
+; control characters
+  cmp al, 's'
+  jne short .post_draw
+  call save
+  jmp short .post_draw
+
+.draw:
+  test al, al
+  jz short .next
+
+  mov [si], al
+  inc si
+  mov ah, default_attribute
+  stosw
+
+.post_draw:
+
+.scroll_check: ; scroll down one line, copying [160,di] to [0,di-160]
+  cmp di, 0xc00 ; only do this if we are about 3/4ths down the screen
+  jl short .end_scroll_check
+
+  mov cx, di
+  sub cx, 160
+
+  ; should never happen since di > 0xc00
+  ;cmp cx, 0
+  ;jle short .end_scroll_check
+
+  push ds
+  push si
+
+  mov si, 160 ; start at beginning of 2nd line
+  xor di, di  ; target beginning of first line
+  push es     ; ds:si -> es:di, basing si off di here, same segment
+  pop ds      ;
+
+  shr cx, 1   ; half the repetitions
+  rep movsw   ; since we're moving double the bytes
+
+  mov cx, 80  ; blank the line we scrolled off of
+  mov ax, 0x0720
+  rep stosw
+  sub di, 160 ; get back to the end of our current position
+
+  pop si      ; restore the text buffer position
+  pop ds      ; and the data segment
+.end_scroll_check:
+
+.reset_cursor_to_di: ; can be replaced with a call to int10?
+  ; cursor position is row+(col*80), which happens to be half of di
+  mov bx, di
+  shr bx, 1
+
+  mov dx, [vga_io_port]
+  mov al, 0x0f ; selects the low word of the cursor position
+  out dx, al
+
+  inc dx
+  mov ax, bx
+  and ax, 0xff
+  out dx, al
+
+  mov dx, [vga_io_port]
+  mov al, 0x0e ; selects the high word of the cursor position
+  out dx, al
+
+  inc dx
+  mov al, bh
+  out dx, al
+
+.next:
+  ; don't be lame and leave the brogrammable interrupt controller hangin'
+  mov al, 0x20
+  out 0x20, al
+
+  sti
+  iret
+
+control_check:
   cmp al, 0x0e
   je .backspace
   cmp al, 0x2a
@@ -179,265 +270,151 @@ keyboard_handler:
   cmp al, 0x9d
   je short .ctrl_up
 
-  cmp al, qwerty_ascii_lower_end - qwerty_ascii_lower + 1
-  jae short .next
-
-  jmp short .translate
-
-.ctrl_down:
-  or byte [shift_flag], 0x02
-  jmp short .next
-
-.ctrl_up:
-  and byte [shift_flag], 0xfd
-  jmp short .next
+  ret ; didn't find a match, return
 
 .shift_down:
-  or byte [shift_flag], 0x01
-  jmp short .next
+  or byte [keyboard_flags], kf_shift_on
+  ret
 
 .shift_up:
-  and byte [shift_flag], 0xfe
-  jmp short .next
+  and byte [keyboard_flags], kf_shift_off
+  ret
+
+.ctrl_down:
+  or byte [keyboard_flags], kf_ctrl_on
+  ret
+
+.ctrl_up:
+  and byte [keyboard_flags], kf_ctrl_off
+  ret
 
 .backspace:
+  push ax
   test di, di
-  jz short .next
-  call backspace
-  jmp short .reset_cursor_to_di
-
-.crlf:
-  call crlf
-  jmp short .reset_cursor_to_di
-
-.translate:
-  mov bx, qwerty_ascii_upper
-  test byte [shift_flag], 1
-  jnz short .upper
-  mov bx, qwerty_ascii_lower
-.upper:
-  xlatb
-
-  call control_handler ; this will set al to zero if we shouldn't print it
-
-  cmp al, 0 ; if al is zero, don't draw it
-  je short .next
-
-  call draw_character
-  inc si
-  add di, 2
-
-  call check_buffer
-
-.onemoretry:
-  cmp di, 0xc00 ; 0xc00/0xfa0 is 76.8% of the screen, that sounds reasonable
-  jl .reset_cursor_to_di
-  ; just scroll the view here
-  call scroll
-
-.reset_cursor_to_di:
-  call reset_cursor_to_di
-
-.next:
-  ; don't be lame and leave the brogrammable interrupt controller hangin'
-  mov al, 0x20
-  out 0x20, al
-
-  sti
-
-  iret
-
-check_buffer:
-  mov ax, [write_buffer_addr]
-  add ax, 0x200
-  cmp si, ax
-  jl .bottom
-  call write_sector
-  sub si, 0x200
-  mov [es:di-1], byte 0x20
-  mov byte [si], 0xff
-
-.bottom:
-  ret
-
-control_handler: ; control is held down, al is the ASCII key.
-  test byte [shift_flag], 2
-  jz .no_control
-  cmp al, 's'
-  jne .return
-  ; well they are holding down ctrl and pressed s without shift, so save
-  ; need to save a partial sector and not blank this one
-  call write_sector
-  cmp si, 0x900
-  jl .return
-  sub word [last_sector], 2 ; re-use this sector if we haven't filled it yet
-.return:
-  ; set al to zero to avoid printing it
-  mov al, 0
-.no_control:
-  ret
-
-scroll: ; scroll back one line, copying 160-di to 0-(di-160)
-  mov cx, di
-  sub cx, 160
-
-  cmp cx, 0
-  jle .return
-
-  push ds
-  push si
-
-  mov si, 160
-  xor di, di
-  push es
-  pop ds
-
-  shr cx, 1
-  rep movsw
-
-  mov cx, 80
-  mov ax, 0x0720
-  rep stosw
-
-  pop si
-  pop ds
-
-  sub di, 160
-
-.return:
-  ret
-
-write_sector: ; this is called when the buffer should be saved
-  push es ; save es since int13 requires we change it
-
-  ; si's "origin" is 0x700. in a partial-sector save si should be retained
-  ; if it is an automatic save si should be reset to 0x700
-  ; also when the partial save occurs it should only write from 0x700 to si
-  ; not from 0x700-0x8ff. the rest of the buffer must be zeroed. this can't
-  ; be too difficult. it sounds like i need three separate functions:
-  ; save 0x700-to-si, clear si-to-0x900, and reset si to 0x700
-
-  ; si is never on a valid character, so we can zero it safely
-
-  ; don't need to touch si to write to disk (es:bx)
-
-  mov eax, [last_sector]
-  inc eax
-  mov [last_sector], eax
-  call lba_to_chs
-  mov ah, 3
-  mov al, 1
-  mov dl, [boot_dev]
-  push word 0
-  pop es
-  mov bx, [write_buffer_addr]
-  clc
-  int 0x13
-  jc int13_error
-
-  ; update the config sector as well
-  ; es should still be zero
-  mov eax, 1 ; this is 1 since lba is zero-indexed
-  call lba_to_chs
-  ; es should still be zero
-  mov bx, sector_2
-  mov ah, 3
-  mov al, 1
-  mov dl, [boot_dev]
-  clc
-  int 0x13
-  jc int13_error
-
-  pop es ; restore old es value
-  ret
-
-draw_character:
-  mov [si], al
-  mov [es:di], al
-  mov [es:di+1], byte 0x07
-  ret
-
-;render:
-;  ; Copies text from memory buffer ds:si to video buffer es:di
-;  ; Stops at 0xff without copying it, puts the cursor where it would be.
-;  ; Bytes are not 1-1 since video memory has an attribute byte.
-;  ; The attribute byte is set to 0x07.
-;
-;  lodsb
-;  cmp al, 0xff
-;  jz .done
-;
-;  mov ah, 0x07
-;  stosw
-;  jmp render
-;
-;.done:
-;  call reset_cursor_to_di
-;  ret
-
-max_sector: db 0
-max_head: db 0
-max_cylinder: dw 0
-boot_dev: db 0
-video_port: dw 0
-
-times 510 - ($ - $$) db 'z' ; position the boot sector marker
-dw 0xaa55
-
-sector_2:
-
-backspace:
+  jz short .no_bksp
+  cmp si, write_buffer
+  je short .no_bksp
   mov al, 0x20
   dec si
-  sub di, 2
-  call draw_character
-  mov byte [si], 0xff
+  dec di
+  dec di ; two decs is less than a sub
+  mov [si], al
+  mov [di], al
+.no_bksp:
+  pop ax
+
   ret
 
-crlf:
+.crlf:
   mov [si], al
   inc si
-  push word 160
+  mov bp, 160
   mov ax, di
   cwd
-  idiv word [esp]
-  add esp, 2
+  idiv bp
   sub di, dx
-  add di, 160
-  ret
-
-reset_cursor_to_di:
-  ; cursor position is row+(col*80), which happens to be half of di
-  mov bx, di
-  shr bx, 1
-
-  mov dx, [video_port]
-  mov al, 0x0f ; selects the low word of the cursor position
-  out dx, al
-
-  inc dx
-  mov ax, bx
-  and ax, 0xff
-  out dx, al
-
-  mov dx, [video_port]
-  mov al, 0x0e ; selects the high word of the cursor position
-  out dx, al
-
-  inc dx
-  mov al, bh
-  out dx, al
+  add di, bp
 
   ret
 
-read_buffer_addr: dw 0x500 ; data stored from 0x500-0x6ff before writing to disk
-write_buffer_addr: dw 0x700 ; data read from disk to 0x700-0x8ff when reading
+save:
+; writing [write_buffer,si) to the disk, one sector at a time
+  push es
+  push word 0
+  pop es
 
-; these values are overwritten during boot
-shift_flag: db 0
+.loop:
+  mov cx, [cx_int13]
+  mov dh, [dh_int13]
+  call increment_chs_sector
 
-last_sector: dd 1 ; 0 is the boot sector, 1 is the config sector
-; this value is 1 on a "fresh install"
+.save:
+
+  mov [cx_int13], cx
+  mov [dh_int13], dh
+
+  call save_sector
+
+  jl .loop
+
+  call save_config
+
+  ; move the current sector back to the starting sector
+  push si
+  push di
+  mov cx, 0x100 ; 0x100 words = 0x200 bytes, save time with same # bytes!
+  and si, 0xfe00       ; ds is always zero
+  mov di, write_buffer ; es is already zero in this function
+  rep stosw
+  pop di
+  pop si
+  and si, 0x1ff
+  add si, write_buffer
+  pop es
+  ret
+
+increment_chs_sector: ; increment one sector in a int13 CHS cx+dh
+  mov al, cl
+  and al, 0x3f
+  cmp al, [max_sector]
+  jl .increment_sector
+
+  ; sector wrapped, reset to minimum value of 1
+  and cl, 0xc0
+  inc cl
+
+  ; try to increment the head
+  cmp dh, [max_head]
+  jl .increment_head
+
+  ; head wrapped, reset to minimum value of 0
+  xor dh, dh
+
+  ; try to increment the 10-bit cylinder number
+  inc ch
+  ;jno .no_overflow
+  jno short .no_overflow
+  ; the cylinder number overflowed 8 bits
+  ; cmp ax, [max_cylinder]
+  ; jge int13_error ; jge disk_full ; LOL
+  add cl, 0x40
+.no_overflow:
+  ret
+
+.increment_head:
+  inc dh
+  ret
+
+.increment_sector:
+  inc cl
+  ret
+
+save_config:
+  ;call lba_to_chs ; static lba sector 1, chs sector 2
+  ; need dh=0,ch=0,cl=2
+  mov cx, 2
+  push word [boot_dev]
+  pop dx
+  mov bx, config_sector
+  call save_sector
+  ret
+
+save_sector: ; always goes to the same sector
+  ; already called lba_to_chs, and bx is loaded
+  mov ax, 0x301
+  int 0x13
+  jc int13_error
+  ret
+
+times 510 - ($ - $$) db 0x21 ; position the bootsector marker 0xaa55
+; using indicator such as ! visualizes remaining space with xxd -l 512
+dw 0xaa55
+
+config_sector:
+
+; last sector written to. the default value corresponds to a "blank slate"
+cx_int13: dw 2
+dh_int13: db 0
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
 qwerty_ascii_lower_end:

@@ -2,10 +2,10 @@ CC=gcc
 CFLAGS=-Wall -g3
 LDFLAGS=-lm
 
-text86: text86.asm reimage
+text86: text86.asm
 	nasm text86.asm
 	dd if=text86 of=st251.img conv=notrunc
-	ndisasm -o 0x7c00 text86 > disasm
+	./disasm.sh
 	xxd -l 512 text86
 
 parse: fat12parse.c
