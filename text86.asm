@@ -17,7 +17,7 @@ org 0x7c00
 %define int13_cx          0x50a
 %define int13_dh          0x50c
 
-%define write_buffer      0x700
+%define write_buffer      0x600
 %define end_of_buffer     0x7bff
 ; no need to protect parts of the initialization routine, but want
 ; to make sure code stays out of the data
@@ -320,7 +320,9 @@ control_check:
 
 save:
 ; writing [write_buffer,si) to the disk, one sector at a time
-; caller should set es properly
+; caller should save es
+  push word 0
+  pop es
   mov bx, write_buffer
 
 .loop:
@@ -379,6 +381,7 @@ save:
   push di
   mov cx, 0x100 ; 0x100 words = 0x200 bytes, save time with same # bytes!
   and si, 0xfe00       ; ds is always zero
+  ;add si, 0x100        ; since we have odd sectors
   mov di, write_buffer ; es is already zero in this function
   rep movsw
   pop di
