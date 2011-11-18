@@ -74,8 +74,6 @@ mov [max_cylinder], dx
 push dword 2
 pop cx
 pop dx
-mov cx, [cx_int13]
-mov dh, [dh_int13]
 mov dl, [boot_dev]
 mov ax, 0x0201 ; int13/ah=2, al=#sectors to read
 mov bx, config_sector
@@ -178,6 +176,7 @@ keyboard_handler:
   cmp al, 's'
   jne short .post_draw
   call save
+  ;call save_config
   jmp short .post_draw
 
 .draw:
@@ -323,21 +322,58 @@ save:
   push word 0
   pop es
 
+  mov bx, write_buffer
+
 .loop:
   mov cx, [cx_int13]
   mov dh, [dh_int13]
-  call increment_chs_sector
+  mov dl, [boot_dev]
+  push cx
+  push dx ; does int13/ah=3 trash registers cx&dh?
+  call write_sector
+  pop dx ; we save and restore these so the increment works proper
+  pop cx
+  add bx, 0x200
+  cmp bx, si
+  jge .done_writing
 
-.save:
+;increment_chs_sector: ; increment one sector in a int13 CHS cx+dh
+  mov al, cl
+  and al, 0x3f
+  cmp al, [max_sector]
+  jl .increment_sector
+  ; sector wrapped, reset to minimum value of 1
+  and cl, 0xc0
+  inc cl
+  ; try to increment the head
+  cmp dh, [max_head]
+  jl .increment_head
+  ; head wrapped, reset to minimum value of 0
+  xor dh, dh
+  ; try to increment the 10-bit cylinder number
+  inc ch
+  ;jno .no_overflow
+  jno short .no_overflow
+  ; the cylinder number overflowed 8 bits
+  ; cmp ax, [max_cylinder]
+  ; jge int13_error ; jge disk_full ; LOL
+  add cl, 0x40
+.no_overflow:
+  jmp .chs_inc_bottom
+.increment_head:
+  inc dh
+  jmp .chs_inc_bottom
+.increment_sector:
+  inc cl
 
+.chs_inc_bottom:
+  ; this saves the changes we made to the config
+  ; it is committed to disk below when save_config is called
   mov [cx_int13], cx
   mov [dh_int13], dh
+  jmp .loop
 
-  call save_sector
-
-  jl .loop
-
-  call save_config
+.done_writing:
 
   ; move the current sector back to the starting sector
   push si
@@ -350,44 +386,6 @@ save:
   pop si
   and si, 0x1ff
   add si, write_buffer
-  pop es
-  ret
-
-increment_chs_sector: ; increment one sector in a int13 CHS cx+dh
-  mov al, cl
-  and al, 0x3f
-  cmp al, [max_sector]
-  jl .increment_sector
-
-  ; sector wrapped, reset to minimum value of 1
-  and cl, 0xc0
-  inc cl
-
-  ; try to increment the head
-  cmp dh, [max_head]
-  jl .increment_head
-
-  ; head wrapped, reset to minimum value of 0
-  xor dh, dh
-
-  ; try to increment the 10-bit cylinder number
-  inc ch
-  ;jno .no_overflow
-  jno short .no_overflow
-  ; the cylinder number overflowed 8 bits
-  ; cmp ax, [max_cylinder]
-  ; jge int13_error ; jge disk_full ; LOL
-  add cl, 0x40
-.no_overflow:
-  ret
-
-.increment_head:
-  inc dh
-  ret
-
-.increment_sector:
-  inc cl
-  ret
 
 save_config:
   ;call lba_to_chs ; static lba sector 1, chs sector 2
@@ -396,10 +394,11 @@ save_config:
   push word [boot_dev]
   pop dx
   mov bx, config_sector
-  call save_sector
-  ret
+;  call write_sector
+;  ret
+; no need to call/ret when the thing is right below us
 
-save_sector: ; always goes to the same sector
+write_sector: ; always goes to the same sector
   ; already called lba_to_chs, and bx is loaded
   mov ax, 0x301
   int 0x13
@@ -413,7 +412,7 @@ dw 0xaa55
 config_sector:
 
 ; last sector written to. the default value corresponds to a "blank slate"
-cx_int13: dw 2
+cx_int13: dw 3 ; i guess this assumes there are at least 3 sectors/track :-/
 dh_int13: db 0
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
