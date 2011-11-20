@@ -401,6 +401,8 @@ save:
   inc bx
   loopnz .buffer_scootch
 
+  mov si, bx
+
   and bx, 0x1ff
   mov [si_at_last_save], bx
 
