@@ -1,7 +1,19 @@
-* manual save-on-demand (e.g. Ctrl+S or something)
+Outstanding Bugs/Issues/Defects
+===============================
+* save overwrites any data in last sector
+
+Features
+========
 * configurable keymap
 * more usage of color! Yeah!! To what end, I don't know yet!!
-* FAT support
-* status bar (words/characters/lines, per session/total)
+* FAT
+* status bar (words/characters/lines, per session/total, control key legend)
 * debug mode (see if it works on your system before it loses your whole novel!)
 * provide a ready-to-flash binary
+* ditch Ctrl+S in favor of a function key? (all function keys are just a cmp/je but Ctrl is much extra bytes
+* look at handling keyboard with xlatb/jmp al?
+
+Completed
+=========
+* manual save-on-demand (e.g. Ctrl+S or something)
+

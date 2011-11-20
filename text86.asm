@@ -2,6 +2,7 @@ top:
 bits 16
 org 0x7c00
 
+; WHAT: constants hard-coding known-available addresses or values
 %define default_attribute 0x07
 
 %define kf_shift_on       0x01
@@ -13,9 +14,6 @@ org 0x7c00
 %define max_head          0x502
 %define max_cylinder      0x504
 %define boot_dev          0x506
-%define keyboard_flags    0x508
-%define int13_cx          0x50a
-%define int13_dh          0x50c
 
 %define write_buffer      0x600
 %define end_of_buffer     0x7bff
@@ -29,6 +27,7 @@ boot_code:
 
 cli ; we are getting ready don't let anyone interrupt us
 
+; WHAT: reset the disk subsystem with int13/ah=0
 ; right off the bat we need zeros in ax, dh, es, ds, and di
 
 xor ax, ax
@@ -48,13 +47,15 @@ mov [boot_dev], dx ; save boot device
 int 0x13
 jc short int13_error
 
-; read info about drive
+; WHAT: read the drive geometry with int13/ah=8
 mov ah, 8
-mov dl, [boot_dev]
+;mov dl, [boot_dev]
 ; es:di should still be 0:0
+; dl should still be the drive
 int 0x13
 jc short int13_error
 
+; WHAT: save the drive geometry in memory
 ; now we have good drive info!
 mov [max_head], dh
 mov dx, cx
@@ -67,6 +68,7 @@ shr dh, 6
 mov dl, ch
 mov [max_cylinder], dx
 
+; WHAT: load the config sector; hard-coded register values for CHS 0/0/2
 ; statically set registers for fixed sector 1
 ; ch = low 8 bits of cyl #
 ; cl bits 0-5 = sector # (needs to be 2 since CHS sectors are 1-indexed)
@@ -80,19 +82,46 @@ mov bx, config_sector
 int 0x13
 jc short int13_error
 
-mov eax, keyboard_handler
-mov [36], eax
-
+; WHAT: restore the last sector and reset si
+mov cx, [cx_int13]
+mov dh, [dh_int13]
+mov ax, 0x201 ; ah=2 read sector, al=01 # of sectors
+mov bx, write_buffer
+int 0x13
+jc short int13_error
 mov si, write_buffer
 
+; WHAT: draw the contents of the buffer
+; this also gets both si and di to the correct positions
 push video_memory
 pop es
 
+mov al, default_attribute
+mov cx, [si_at_last_save]
+draw_buffer:
+  movsb ; copy the character
+  stosb ; set the attribute
+  loopnz draw_buffer
+
+push di
+mov cx, 2000
+sub cx, di
+mov ax, 0x0720
+rep stosw
+pop di
+
+; WHAT: setup the keyboard interrupt handler, write buffer, and video pointer
+mov eax, keyboard_handler
+mov [36], eax
+
+; WHAT: start the main loop
 main_loop:
+  xor bp, bp
   sti
 do_not_overwrite_the_following_code_with_data:
   jmp short $
 
+; WHAT: subroutine int13_error: print the int13 al status followed by a red-highlighted 'e'
 int13_error:
   push word video_memory
   pop es
@@ -122,6 +151,7 @@ int13_error:
 ;  call hexprint_al
 ;  ret
 
+; WHAT: subroutine hexprint_al: write the value of al as a human-readable 2-character hex byte to es:di
 hexprint_al:
   push ax
   shr al, 4
@@ -130,6 +160,7 @@ hexprint_al:
   call hexprint_low_nibble_of_al
   ret
 
+; WHAT: subroutine hexprint_low_nibble_of_al: write the single-digit value of al & 0xf in hex to es:di
 hexprint_low_nibble_of_al:
   mov ah, default_attribute
   and al, 0x0f
@@ -142,6 +173,7 @@ hexprint_low_nibble_of_al:
 
   ret
 
+; WHAT: keyboard interrupt handler
 keyboard_handler:
   cli
 .spin: ; ahhahahahaha dizzy loop
@@ -164,14 +196,13 @@ keyboard_handler:
 
 .translate:
   mov bx, qwerty_ascii_upper
-  mov cl, [keyboard_flags]
-  test cl, kf_shift_on
+  test bp, kf_shift_on
   jnz short .upper
   mov bx, qwerty_ascii_lower
 .upper:
   xlatb
 
-  test cl, kf_ctrl_on
+  test bp, kf_ctrl_on
   jz short .draw
 
 ; control characters
@@ -180,7 +211,6 @@ keyboard_handler:
   push es
   call save
   pop es
-  ;call save_config
   jmp short .post_draw
 
 .draw:
@@ -198,31 +228,15 @@ keyboard_handler:
   cmp di, 0xc00 ; only do this if we are about 3/4ths down the screen
   jl short .end_scroll_check
 
-  mov cx, di
-  sub cx, 160
+  push di
+  xor di, di
+.scroll_loop:
+  mov ax, [es:di+160]
+  stosw
+  cmp di, 0xc00
+  jl .scroll_loop
+  pop di
 
-  ; should never happen since di > 0xc00
-  ;cmp cx, 0
-  ;jle short .end_scroll_check
-
-  push ds
-  push si
-
-  mov si, 160 ; start at beginning of 2nd line
-  xor di, di  ; target beginning of first line
-  push es     ; ds:si -> es:di, basing si off di here, same segment
-  pop ds      ;
-
-  shr cx, 1   ; half the repetitions
-  rep movsw   ; since we're moving double the bytes
-
-  mov cx, 80  ; blank the line we scrolled off of
-  mov ax, 0x0720
-  rep stosw
-  sub di, 160 ; get back to the end of our current position
-
-  pop si      ; restore the text buffer position
-  pop ds      ; and the data segment
 .end_scroll_check:
 
 .reset_cursor_to_di: ; can be replaced with a call to int10?
@@ -236,10 +250,9 @@ keyboard_handler:
 
   inc dx
   mov ax, bx
-  and ax, 0xff
   out dx, al
 
-  mov dx, [vga_io_port]
+  dec dx
   mov al, 0x0e ; selects the high word of the cursor position
   out dx, al
 
@@ -276,19 +289,19 @@ control_check:
   ret ; didn't find a match, return
 
 .shift_down:
-  or byte [keyboard_flags], kf_shift_on
+  or bp, kf_shift_on
   ret
 
 .shift_up:
-  and byte [keyboard_flags], kf_shift_off
+  and bp, kf_shift_off
   ret
 
 .ctrl_down:
-  or byte [keyboard_flags], kf_ctrl_on
+  or bp, kf_ctrl_on
   ret
 
 .ctrl_up:
-  and byte [keyboard_flags], kf_ctrl_off
+  and bp, kf_ctrl_off
   ret
 
 .backspace:
@@ -307,6 +320,7 @@ control_check:
   ret
 
 .crlf:
+  push bp
   mov [si], al
   inc si
   mov bp, 160
@@ -315,6 +329,7 @@ control_check:
   idiv bp
   sub di, dx
   add di, bp
+  pop bp
 
   ret
 
@@ -325,45 +340,44 @@ save:
   pop es
   mov bx, write_buffer
 
-.loop:
   mov cx, [cx_int13]
   mov dh, [dh_int13]
   mov dl, [boot_dev]
-  push cx
-  push dx ; does int13/ah=3 trash registers cx&dh?
+.loop:
+  ;push cx
+  ;push dx ; does int13/ah=3 trash registers cx&dh?
   call write_sector
-  pop dx ; we save and restore these so the increment works proper
-  pop cx
+  ;pop dx ; we save and restore these so the increment works proper
+  ;pop cx
   add bx, 0x200
   cmp bx, si
-  jge .done_writing
+  jge short .done_writing
 
 ;increment_chs_sector: ; increment one sector in a int13 CHS cx+dh
   mov al, cl
-  and al, 0x3f
+  and al, 0x3f ; test the low six bits only
   cmp al, [max_sector]
-  jl .increment_sector
+  jl short .increment_sector
   ; sector wrapped, reset to minimum value of 1
   and cl, 0xc0
   inc cl
   ; try to increment the head
   cmp dh, [max_head]
-  jl .increment_head
+  jl short .increment_head
   ; head wrapped, reset to minimum value of 0
   xor dh, dh
   ; try to increment the 10-bit cylinder number
   inc ch
-  ;jno .no_overflow
   jno short .no_overflow
-  ; the cylinder number overflowed 8 bits
+  ; here, the cylinder number overflowed 8 bits
   ; cmp ax, [max_cylinder]
   ; jge int13_error ; jge disk_full ; LOL
   add cl, 0x40
 .no_overflow:
-  jmp .chs_inc_bottom
+  jmp short .chs_inc_bottom
 .increment_head:
   inc dh
-  jmp .chs_inc_bottom
+  jmp short .chs_inc_bottom
 .increment_sector:
   inc cl
 
@@ -372,29 +386,29 @@ save:
   ; it is committed to disk below when save_config is called
   mov [cx_int13], cx
   mov [dh_int13], dh
-  jmp .loop
+  jmp short .loop
 
 .done_writing:
 
   ; move the current sector back to the starting sector
-  push si
-  push di
-  mov cx, 0x100 ; 0x100 words = 0x200 bytes, save time with same # bytes!
-  and si, 0xfe00       ; ds is always zero
-  ;add si, 0x100        ; since we have odd sectors
-  mov di, write_buffer ; es is already zero in this function
-  rep movsw
-  pop di
-  pop si
-  and si, 0x1ff
-  add si, write_buffer
+  mov cx, si
+  and cx, 0x01ff
+  and si, 0xfe00
+  mov bx, write_buffer
+.buffer_scootch:
+  lodsb
+  mov [bx], al
+  inc bx
+  loopnz .buffer_scootch
+
+  and bx, 0x1ff
+  mov [si_at_last_save], bx
 
 save_config:
   ;call lba_to_chs ; static lba sector 1, chs sector 2
   ; need dh=0,ch=0,cl=2
   mov cx, 2
-  push word [boot_dev]
-  pop dx
+  mov dx, [boot_dev]
   mov bx, config_sector
 ;  call write_sector
 ;  ret
@@ -407,7 +421,9 @@ write_sector: ; always goes to the same sector
   jc int13_error
   ret
 
+%ifndef _NOSIZE
 times 510 - ($ - $$) db 0x21 ; position the bootsector marker 0xaa55
+%endif
 ; using indicator such as ! visualizes remaining space with xxd -l 512
 dw 0xaa55
 
@@ -416,6 +432,7 @@ config_sector:
 ; last sector written to. the default value corresponds to a "blank slate"
 cx_int13: dw 3 ; i guess this assumes there are at least 3 sectors/track :-/
 dh_int13: db 0
+si_at_last_save: dw 0
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
 qwerty_ascii_lower_end:
