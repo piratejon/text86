@@ -126,8 +126,8 @@ int13_error:
   push word video_memory
   pop es
   xor di, di
-  call hexprint_al
-  mov ax, 0x4066
+  call small_hexprint_al
+  mov ax, 0x4065
 ;  mov al, 'e'
 ;  stosb
 ;  mov al, 0x40
@@ -152,25 +152,40 @@ int13_error:
 ;  ret
 
 ; WHAT: subroutine hexprint_al: write the value of al as a human-readable 2-character hex byte to es:di
-hexprint_al:
-  push ax
-  shr al, 4
-  call hexprint_low_nibble_of_al
-  pop ax
-  call hexprint_low_nibble_of_al
-  ret
+;hexprint_al:
+;  push ax
+;  shr al, 4
+;  call hexprint_low_nibble_of_al
+;  pop ax
+;  call hexprint_low_nibble_of_al
+;  ret
+;
+;; WHAT: subroutine hexprint_low_nibble_of_al: write the single-digit value of al & 0xf in hex to es:di
+;hexprint_low_nibble_of_al:
+;  mov ah, default_attribute
+;  and al, 0x0f
+;  cmp al, 0x09
+;  jle short .num
+;  add al, ah
+;.num:
+;  add al, 0x30
+;  stosw
+;
+;  ret
 
-; WHAT: subroutine hexprint_low_nibble_of_al: write the single-digit value of al & 0xf in hex to es:di
-hexprint_low_nibble_of_al:
+small_hexprint_al:
+  push word 0
+  pop ds
+  mov bx, al_conv_ascii
   mov ah, default_attribute
-  and al, 0x0f
-  cmp al, 0x09
-  jle short .num
-  add al, ah
-.num:
-  add al, 0x30
+  push ax
+  and al, 0xf0
+  xlatb
   stosw
-
+  pop ax
+  shr al, 4
+  xlatb
+  stosw
   ret
 
 ; WHAT: keyboard interrupt handler
@@ -435,6 +450,8 @@ config_sector:
 cx_int13: dw 3 ; i guess this assumes there are at least 3 sectors/track :-/
 dh_int13: db 0
 si_at_last_save: dw 0
+
+al_conv_ascii: db '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'
 
 qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
 qwerty_ascii_lower_end:
