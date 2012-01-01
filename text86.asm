@@ -206,14 +206,14 @@ keyboard_handler:
   call control_check
   pop ax
 
-  cmp al, qwerty_ascii_lower_end - qwerty_ascii_lower + 1
+  cmp al, dvorak_ascii_lower_end - dvorak_ascii_lower + 1
   jae short .post_draw
 
 .translate:
-  mov bx, qwerty_ascii_upper
+  mov bx, dvorak_ascii_upper
   test bp, kf_shift_on
   jnz short .upper
-  mov bx, qwerty_ascii_lower
+  mov bx, dvorak_ascii_lower
 .upper:
   xlatb
 
