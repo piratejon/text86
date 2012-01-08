@@ -1,15 +1,20 @@
   ,-===========-.
  (| Quick Start |)
   `-===========-'
-This incarnation of text86 is not meant to share the flash drive with other
-purposes and destructively overwrites the master boot record and partition
-table and several bytes after these.
+This incarnation of text86 is immature, expressly not user-friendly, and not
+meant to share the flash drive with other purposes. To destructively overwrite
+the master boot record and partition table and several bytes after these and
+install text86, run something like this command:
 
-make && dd if=text86 of=/dev/your/flash/drive
+  make && dd if=text86 of=/dev/your/flash/drive
 
 For example, my flash drive on this computer is /dev/sdb, so I do this:
 
-make && sudo dd if=text86 of=/dev/sdb
+  make && sudo dd if=text86 of=/dev/sdb
+
+Your saved text will be accessible starting at the 1024th byte on the disk.
+That is not very user-friendly, so support for a proper filesystem is
+imminent, just when I get around to it :)
       _______
      f       \
      | Usage | 
@@ -17,7 +22,7 @@ make && sudo dd if=text86 of=/dev/sdb
 After installing per the above, just boot your computer to the flash drive and
 start typing. It's really that simple. Press Ctrl+S to save early and often.
 There is no autosave or intelligent recovery of any sort. Anything not saved
-at power-off is effectively lost. Text is save in 512-byte sectors. When you
+at power-off is effectively lost. Text is saved in 512-byte sectors. When you
 save, power off, and boot back up, only the text from the most recent 512-byte
 sector is put on the screen to remind you where you left off, but the rest of
 the text is probably still there, honest! When you're finished, do a final
@@ -35,5 +40,5 @@ make and dd as above. rm keymap && make to get qwerty back.
 * Start the cursor at the correct end-of-text on restore
 * Make a keystroke that reboots (after saving, of course)
 * Word count, either ongoing or at save
-* You there! Add your preferred keymap!
+* You there! Add your preferred keymap! Look at keymap.py to see how.
 
