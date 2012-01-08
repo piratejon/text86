@@ -26,6 +26,8 @@ org 0x7c00
 ; this is how many ascii characters for the scan code range check -- dumb lol
 %define scan_codes        58
 
+%define scroll_window     0x0c00
+
 boot_code:
 
 cli ; we are getting ready don't let anyone interrupt us
@@ -243,7 +245,7 @@ keyboard_handler:
 .post_draw:
 
 .scroll_check: ; scroll down one line, copying [160,di] to [0,di-160]
-  cmp di, 0xc00 ; only do this if we are about 3/4ths down the screen
+  cmp di, scroll_window ; only do this if we are about 3/4ths down the screen
   jl short .end_scroll_check
 
   push di
@@ -251,7 +253,7 @@ keyboard_handler:
 .scroll_loop:
   mov ax, [es:di+160]
   stosw
-  cmp di, 0xc00
+  cmp di, scroll_window
   jl .scroll_loop
   pop di
 
