@@ -256,6 +256,7 @@ keyboard_handler:
   cmp di, scroll_window
   jl .scroll_loop
   pop di
+  sub di, 160
 
 .end_scroll_check:
 
