@@ -1,7 +1,39 @@
-How to use this:
-Well, assemble it with "make" and then get the image called "reboot" onto your flash drive. For example "dd if=reboot of=/dev/sdb". If you choose the wrong letter you can hose your system. Choose the right letter! Windows install instructions to come soon. Installing this on your flash drive deletes the boot sector including partition table and also the first sector after the boot sector (at least, for now). Furthermore, as you type more and more, the sectors on your disk become consumed 512 bytes at a time. This does not play nicely with existing partition tables and filesystems and rather brazenly assumes it is the only thing expecting to use the space and indiscriminately overwrites existing data without warning. I did not test the LBA to CHS conversion fully, but it does do the first 4 sectors correctly as well as the last sector (on the test image/test geometry).
+  ,-===========-.
+ (| Quick Start |)
+  `-===========-'
+This incarnation of text86 is not meant to share the flash drive with other
+purposes and destructively overwrites the master boot record and partition
+table and several bytes after these.
 
-Right now it boots and you start typing and it saves every 512 bytes input to another sector, and correctly stores the last-saved sector so that when you reboot and start typing again, it starts saving the new text right after the text you entered for last session! Great stuff! Working product! Buy now! Bear in mind if you type 511 bytes, then nothing got saved! The last byte saved is conveniently highlighted in beautiful ANSI dark green. If a disk error occurs and the system is adroit enough to draw on the display, it will display the error code in red and then halt -- perfect time to reboot and send me an email about your unfortunate circumstances including the make and model of your computer and your BIOS revision.
+make && dd if=text86 of=/dev/your/flash/drive
 
-Some drivel about the history and intent of this project:
-The goal is getting a USB key to boot up to a place where you can type text and it saves it to the USB key. I first thought of this as a fun way to get ready for NaNoWriMo and expected to use it throughout. I was inspired by Write or Die and wanted to create something of a "Write or Die OS", well, that did not happen and what remains has only in common with Write or Die that it lets you enter text, similarly to Notepad.exe, but without the excellent support of user32.dll and gdi32.dll, just plain text and 80x25 only (or whatever your computer happens to boot up at and draws from memory location 0xb8000). I also wrote it for the fun of doing stuff in assembly and learning more about my computer and its architecture. I learned a lot from OSDev.org's wiki and Ralph Brown's Interrupt List. At various points I thought I was going to use an E820 memory map to find a large segment of unused memory and enumerate the PCI bus to identify a USB hub and write a USB driver to interact with the USB key, but that was a lot of work so I stuck with int13 and rely on BIOS USB hard drive emulation. (I was able to generate an e820 memory map and enumerate the PCI bus, by the way!) I would like to add FAT support next to increase the usability and appeal to a wider audience and to get along with other uses for flash drives. It doesn't make sense to have a 8GB key of a single linear document. Maybe this would be a nice journal.
+For example, my flash drive on this computer is /dev/sdb, so I do this:
+
+make && sudo dd if=text86 of=/dev/sdb
+      _______
+     f       \
+     | Usage | 
+     \_______j
+After installing per the above, just boot your computer to the flash drive and
+start typing. It's really that simple. Press Ctrl+S to save early and often.
+There is no autosave or intelligent recovery of any sort. Anything not saved
+at power-off is effectively lost. Text is save in 512-byte sectors. When you
+save, power off, and boot back up, only the text from the most recent 512-byte
+sector is put on the screen to remind you where you left off, but the rest of
+the text is probably still there, honest! When you're finished, do a final
+save to be certain then power off.
+
+   ,^^^^^^^^^^.
+  <| Advanced |>
+   `vvvvvvvvvv'
+Use keymap.py to set the keyboard layout in the file called keymap. Then run
+make and dd as above. rm keymap && make to get qwerty back.
+
+    ##########
+       todo
+    ##########
+* Start the cursor at the correct end-of-text on restore
+* Make a keystroke that reboots (after saving, of course)
+* Word count, either ongoing or at save
+* You there! Add your preferred keymap!
+
