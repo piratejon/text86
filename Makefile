@@ -4,12 +4,14 @@ LDFLAGS=-lm
 
 text86: text86.asm
 	nasm text86.asm
+	cat keymap >> text86
 	dd if=text86 of=st251.img conv=notrunc
 	./disasm.sh
 	xxd -l 512 text86
 
 nosize:
 	nasm -D_NOSIZE text86.asm
+	cat keymap >> text86
 	./disasm.sh
 	less disasm
 

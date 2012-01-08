@@ -23,6 +23,9 @@ org 0x7c00
 %define vga_io_port       0x463
 %define video_memory      0xb800
 
+; this is how many ascii characters for the scan code range check -- dumb lol
+%define scan_codes        58
+
 boot_code:
 
 cli ; we are getting ready don't let anyone interrupt us
@@ -206,14 +209,14 @@ keyboard_handler:
   call control_check
   pop ax
 
-  cmp al, dvorak_ascii_lower_end - dvorak_ascii_lower + 1
+  cmp al, scan_codes + 1
   jae short .post_draw
 
 .translate:
-  mov bx, dvorak_ascii_upper
+  mov bx, ascii_table + scan_codes
   test bp, kf_shift_on
   jnz short .upper
-  mov bx, dvorak_ascii_lower
+  mov bx, ascii_table
 .upper:
   xlatb
 
@@ -453,13 +456,5 @@ si_at_last_save: dw 0
 
 al_conv_ascii: db '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'
 
-qwerty_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0,'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s','d','f','g','h','j','k','l', 0x3b, 0x27, '`', 0, '\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' '
-qwerty_ascii_lower_end:
-qwerty_ascii_upper: db 0,0,0x21,'@',0x23,'$','%','^','&','*','(',')','_','+',0,0,'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,'A','S','D','F','G','H','J','K','L', ':', '"', '~', 0, 0x7c, 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' '
-qwerty_ascii_upper_end:
-
-dvorak_ascii_lower: db 0,0,'1','2','3','4','5','6','7','8','9','0','[',']',0,0,0x27,',','.','p','y','f','g','c','r','l','/','=',0,0,'a','o','e','u','i','d','h','t','n','s','-', '`', 0, 0x3b, 'q', 'j', 'k', 'x', 'b', 'm', 'w', 'v', 'z', 0, 0, 0, ' '
-dvorak_ascii_lower_end:
-dvorak_ascii_upper: db 0,0,0x21,'@',0x23,'$','%','^','&','*','(',')','{','}',0,0,'"','<','>','P','Y','F','G','C','R','L','?','+',0,0,'A','O','E','U','I','D','H','T','N','S', '_', '~', 0, 0x7c, ':', 'Q', 'J', 'K', 'X', 'B', 'M', 'W', 'V', 'Z', 0, 0, 0, ' '
-dvorak_ascii_upper_end:
+ascii_table: ; keymap-specific bytes, 58 unshifted followed by 58 shifted
 
